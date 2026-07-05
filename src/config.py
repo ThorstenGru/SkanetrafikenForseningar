@@ -58,6 +58,13 @@ def realtime_key():
     return get_key("TRAFIKLAB_REALTIME_KEY")
 
 
+def koda_key():
+    """API key for KoDa (Kollektivtrafikens Datalabb), Trafiklab's historical
+    GTFS-RT archive — a separate product/key from the live realtime feed,
+    used only by backfill_koda.py."""
+    return get_key("KODA_API_KEY")
+
+
 # GTFS-RT Alert.Cause / Alert.Effect enum labels (protobuf spec)
 CAUSE_LABELS = {
     1: "UNKNOWN_CAUSE",

@@ -88,6 +88,7 @@ individual delay) lives in a separate, non-public Postgres database.
 | `src/housekeeping.py` | Deletes data older than 45 days. Runs automatically daily. |
 | `src/build_dashboard.py` | Builds the standalone HTML dashboard. Runs automatically on every scan. |
 | `src/static_index.py` | Can be run standalone to force a static-index refresh. |
+| `src/backfill_koda.py` | One-off backfill of past days from Trafiklab's KoDa historical archive. Manually triggered (`backfill.yml`), see [docs/RUNBOOK.md](docs/RUNBOOK.md#backfill-historical-data-koda). |
 
 ## Known limitations / future ideas
 

@@ -140,6 +140,15 @@ routine delays (ordinary traffic congestion) have no published alert though
 **`housekeeping.yml`** (daily): runs the coverage check for yesterday, then
 deletes everything older than 45 days.
 
+**`backfill.yml`** (manual only): one-off historical backfill via
+`src/backfill_koda.py`, see [docs/RUNBOOK.md](RUNBOOK.md#backfill-historical-data-koda).
+GTFS-RT itself has no history — this pulls past days from Trafiklab's
+separate KoDa archive product and replays them through the same
+`process_trip_updates`/`process_alerts` functions the live scanner uses,
+sampled at the same 2-hourly cadence so backfilled and live data share the
+same blind spots and shape. `timeout-minutes: 350` because KoDa builds each
+day's archive on first request, which can take up to ~60 minutes.
+
 ## Dashboard (`src/build_dashboard.py`)
 
 Reads directly from Postgres (no local SQLite involved for delay data — the

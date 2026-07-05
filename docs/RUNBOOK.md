@@ -58,6 +58,51 @@ Open the resulting `dashboard.html` directly in a browser. At the top is a
 "Showing day" selector. Everything else (stats, per-line, the log) filters
 by the selected day.
 
+## Backfill historical data (KoDa)
+
+The live scanner only sees delays from the moment it starts polling — GTFS-RT
+itself is a live feed with no history. To fill in the past, Trafiklab's
+[KoDa](https://www.trafiklab.se/api/our-apis/koda/) archive stores daily
+snapshots of TripUpdates/ServiceAlerts going back years. `src/backfill_koda.py`
+downloads each requested day, picks the snapshot closest to each of our normal
+2-hourly poll marks, and runs it through the exact same processing pipeline
+as a live scan, using that snapshot's own embedded timestamp (not wall-clock
+time) — so backfilled rows are indistinguishable from ones the live scanner
+would have written, just after the fact.
+
+Requires its own API key — KoDa is a separate Trafiklab product from GTFS
+Regional Static/Realtime:
+1. Log in at https://developer.trafiklab.se → add the **KoDa** API to a
+   project → copy the key.
+2. `gh secret set KODA_API_KEY --body "..." -R ThorstenGru/SkanetrafikenForseningar`
+
+**Via GitHub Actions (recommended — this can run for a long time):**
+```bash
+gh workflow run backfill.yml -R ThorstenGru/SkanetrafikenForseningar -f days=32 -f interval_hours=2
+```
+
+**Locally:**
+```bash
+export TRAFIKLAB_STATIC_KEY=...
+export KODA_API_KEY=...
+export DATABASE_URL=...
+python src/backfill_koda.py --days 32
+python src/backfill_koda.py --start 2026-06-01 --end 2026-06-30
+```
+
+Caveats:
+- KoDa builds each day's archive on first request — this can take anywhere
+  from a few seconds up to ~60 minutes per day, hence the long CI timeout.
+- Sampling every 2 hours means a delay that appears and fully resolves
+  between two marks is invisible — exactly the same blind spot the live
+  scanner has, so backfilled and live data stay consistent with each other.
+- Reuses today's static index (routes/trip metadata) for the whole
+  backfilled range. Fine in practice since Skånetrafiken's timetable
+  changes only a few times a year, but a schedule change inside the
+  backfilled window could cause a handful of `trip_id` lookups to miss.
+- Safe to re-run: all writes go through the same `ON CONFLICT` upserts as a
+  live scan, so re-backfilling a day just updates it, never duplicates it.
+
 ## Inspect the database directly
 
 ```bash
