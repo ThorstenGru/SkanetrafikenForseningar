@@ -1,9 +1,13 @@
-"""Generate a self-contained HTML dashboard of all recorded deviations for a
-given day, from the local forseningar.db. No network access required.
+"""Generate a self-contained HTML dashboard of recorded deviations, from the
+local forseningar.db. No network access required.
+
+By default exports the FULL recorded history (all days), so you can browse
+day-to-day trends and drill into any past day in the same file. Pass --date
+to scope it down to a single day once the history grows large.
 
 Usage:
-    python src/build_dashboard.py                # today (local time)
-    python src/build_dashboard.py --date 20260705
+    python src/build_dashboard.py                # all recorded history
+    python src/build_dashboard.py --date 20260705 # just one day
     python src/build_dashboard.py --out dashboard.html
 """
 
@@ -62,14 +66,19 @@ def classify(row):
     return "OK/marginell", delay_sec
 
 
-def export_rows(conn, date_str):
+def export_rows(conn, date_str=None):
+    """date_str=None exports the full recorded history (all days)."""
     lookups = build_alert_lookups(conn)
     out = []
 
-    for row in conn.execute("SELECT * FROM delays WHERE trip_start_date = ?", (date_str,)):
+    where = "WHERE trip_start_date = ?" if date_str else ""
+    params = (date_str,) if date_str else ()
+
+    for row in conn.execute("SELECT * FROM delays %s" % where, params):
         status, delay_sec = classify(row)
         out.append({
             "trip": row["trip_id"],
+            "date": row["trip_start_date"],
             "line": row["route_short_name"],
             "dest": row["destination_stop_name"],
             "stop": row["stop_name"],
@@ -89,9 +98,10 @@ def export_rows(conn, date_str):
             "polls": row["poll_count"],
         })
 
-    for row in conn.execute("SELECT * FROM trip_cancellations WHERE trip_start_date = ?", (date_str,)):
+    for row in conn.execute("SELECT * FROM trip_cancellations %s" % where, params):
         out.append({
-            "trip": row["trip_id"], "line": row["route_short_name"], "dest": row["destination_stop_name"],
+            "trip": row["trip_id"], "date": row["trip_start_date"],
+            "line": row["route_short_name"], "dest": row["destination_stop_name"],
             "stop": "(HELA TUREN)", "seq": None, "final": None, "status": "Installd tur",
             "relationship": "CANCELED", "delayMin": None, "schedDep": None, "actDep": None,
             "schedArr": None, "actArr": None, "weekday": None,
@@ -104,15 +114,13 @@ def export_rows(conn, date_str):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--date", default=None, help="YYYYMMDD, default: today (local time)")
+    parser.add_argument("--date", default=None, help="YYYYMMDD. Omit to export the full recorded history.")
     parser.add_argument("--out", default=os.path.join(config.REPO_ROOT, "dashboard.html"))
     args = parser.parse_args()
 
-    date_str = args.date or datetime.now().strftime("%Y%m%d")
-
     conn = sqlite3.connect(config.DB_PATH)
     conn.row_factory = sqlite3.Row
-    rows = export_rows(conn, date_str)
+    rows = export_rows(conn, args.date)
     conn.close()
 
     with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
@@ -124,7 +132,8 @@ def main():
     with open(args.out, "w", encoding="utf-8") as f:
         f.write(html)
 
-    print("Dashboard skriven till %s (%d rader for %s)" % (args.out, len(rows), date_str))
+    scope = args.date or ("hela historiken, %d dagar" % len({r["date"] for r in rows}) if rows else "hela historiken")
+    print("Dashboard skriven till %s (%d rader, %s)" % (args.out, len(rows), scope))
 
 
 if __name__ == "__main__":

@@ -1,4 +1,9 @@
-<title>Skånetrafiken – Dagens förseningar</title>
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skånetrafiken – Förseningshistorik</title>
 <style>
   :root {
     --bg: #0a0d11;
@@ -241,6 +246,24 @@
   .dest-stop { color: var(--ink); }
   .dest-arrow { color: var(--ink-faint); margin: 0 5px; }
 
+  /* History bars */
+  .bar-track {
+    background: var(--panel-alt);
+    border-radius: 2px;
+    height: 6px;
+    width: 100%;
+    min-width: 80px;
+    overflow: hidden;
+  }
+  .bar-fill { height: 100%; background: var(--amber); border-radius: 2px; }
+  .bar-fill.crit { background: var(--red); }
+  .bar-cell { display: flex; align-items: center; gap: 8px; }
+  .bar-cell .num { flex: 0 0 auto; }
+
+  #historyTable tbody tr { cursor: pointer; }
+  #historyTable tbody tr.active td { background: rgba(242, 169, 59, 0.09); }
+  #historyTable tbody tr.active td:first-child { box-shadow: inset 3px 0 0 var(--amber); }
+
   /* Controls */
   .controls {
     display: flex;
@@ -315,13 +338,43 @@
     * { transition: none !important; animation: none !important; }
   }
 </style>
+</head>
+<body>
 
 <div class="wrap">
   <header class="top">
     <div class="eyebrow">Skånetrafiken · GTFS Regional / Trafiklab</div>
-    <h1>Dagens avvikelser, hela nätet</h1>
+    <h1>Förseningshistorik, hela nätet</h1>
     <div class="meta-line" id="metaLine">laddar…</div>
   </header>
+
+  <section>
+    <div class="section-head">
+      <h2>Historik per dag</h2>
+      <span class="hint">Klicka en rad för att zooma in på den dagen</span>
+    </div>
+    <div class="table-scroll">
+      <table id="historyTable">
+        <thead>
+          <tr>
+            <th>Datum</th>
+            <th>Veckodag</th>
+            <th>Avvikelser</th>
+            <th>Inställda/hoppade</th>
+            <th>Snittförsening</th>
+            <th>Värst</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="controls">
+    <label for="dayFilter">Visar dag</label>
+    <select id="dayFilter"></select>
+    <span class="hint" id="dayHint"></span>
+  </div>
 
   <section class="stats" id="statStrip"></section>
 
@@ -349,7 +402,7 @@
 
   <section>
     <div class="section-head">
-      <h2>Logg — alla registrerade avvikelser idag</h2>
+      <h2>Logg — alla registrerade avvikelser</h2>
       <span class="hint" id="logCount"></span>
     </div>
 
@@ -442,63 +495,129 @@
     return d.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' });
   }
 
-  // ---- Stat strip ----
-  var total = data.length;
-  var lines = new Set(data.map(function (r) { return r.line; }));
-  var cancelledLike = data.filter(function (r) {
+  var WEEKDAY_NAMES = ['mån', 'tis', 'ons', 'tors', 'fre', 'lör', 'sön'];
+  function fmtDate(yyyymmdd) {
+    if (!yyyymmdd) return '–';
+    return yyyymmdd.slice(0, 4) + '-' + yyyymmdd.slice(4, 6) + '-' + yyyymmdd.slice(6, 8);
+  }
+  function isCancelledLike(r) {
     return r.status === 'Installd tur' || r.status === 'Installd (nar inte slutstation)' || r.status === 'Hoppar over hallplats';
-  }).length;
-  var delayVals = data.map(function (r) { return r.delayMin; }).filter(function (v) { return v !== null && v !== undefined && v > 0; });
-  var avgDelay = delayVals.length ? (delayVals.reduce(function (a, b) { return a + b; }, 0) / delayVals.length) : 0;
-  var worst = data.reduce(function (acc, r) {
-    return (r.delayMin !== null && r.delayMin !== undefined && r.delayMin > (acc ? acc.delayMin : -Infinity)) ? r : acc;
-  }, null);
-
-  var stats = [
-    { label: 'Registrerade avvikelser', value: total.toLocaleString('sv-SE'), sub: 'rader idag', cls: '' },
-    { label: 'Distinkta linjer', value: lines.size, sub: 'påverkade', cls: '' },
-    { label: 'Inställda / hoppade', value: cancelledLike.toLocaleString('sv-SE'), sub: 'hållplatser & turer', cls: 'crit' },
-    { label: 'Snittförsening', value: avgDelay.toFixed(1) + ' min', sub: 'bland försenade', cls: '' },
-    { label: 'Värsta försening', value: worst ? fmtDelay(worst.delayMin) : '–', sub: worst ? ('linje ' + worst.line + ' → ' + worst.dest) : '', cls: 'crit' }
-  ];
-  var stripEl = document.getElementById('statStrip');
-  stats.forEach(function (s) {
-    var div = document.createElement('div');
-    div.className = 'stat' + (s.cls ? ' ' + s.cls : '');
-    div.innerHTML = '<div class="label">' + s.label + '</div><div class="value">' + s.value + '</div><div class="sub">' + s.sub + '</div>';
-    stripEl.appendChild(div);
-  });
+  }
 
   var lastSeenMax = data.reduce(function (acc, r) { return (r.lastSeen && r.lastSeen > acc) ? r.lastSeen : acc; }, '');
-  document.getElementById('metaLine').textContent = total.toLocaleString('sv-SE') + ' rader · senaste pollning ' + (lastSeenMax ? fmtSeen(lastSeenMax) : '–') + ' · alla tider lokal tid';
+  document.getElementById('metaLine').textContent =
+    data.length.toLocaleString('sv-SE') + ' rader totalt · senaste pollning ' +
+    (lastSeenMax ? fmtSeen(lastSeenMax) : '–') + ' · alla tider lokal tid';
 
-  // ---- Per-line summary ----
-  var byLine = {};
+  // ---- History table (always full dataset, independent of day filter) ----
+  var byDate = {};
   data.forEach(function (r) {
-    var k = r.line || '?';
-    if (!byLine[k]) byLine[k] = { line: k, count: 0, delaySum: 0, delayN: 0, worst: 0, cancelled: 0, dests: {} };
-    var g = byLine[k];
+    var k = r.date || '?';
+    if (!byDate[k]) byDate[k] = { date: k, count: 0, cancelled: 0, delaySum: 0, delayN: 0, worst: 0 };
+    var g = byDate[k];
     g.count++;
+    if (isCancelledLike(r)) g.cancelled++;
     if (r.delayMin) { g.delaySum += Math.max(r.delayMin, 0); g.delayN++; g.worst = Math.max(g.worst, r.delayMin); }
-    if (r.status === 'Installd tur' || r.status === 'Installd (nar inte slutstation)' || r.status === 'Hoppar over hallplats') g.cancelled++;
-    g.dests[r.dest] = (g.dests[r.dest] || 0) + 1;
   });
-  var lineRows = Object.values(byLine).sort(function (a, b) { return b.count - a.count; });
-  var lineBody = document.querySelector('#lineTable tbody');
-  lineRows.forEach(function (g) {
-    var topDest = Object.entries(g.dests).sort(function (a, b) { return b[1] - a[1]; })[0];
-    var tr = document.createElement('tr');
-    tr.innerHTML =
-      '<td><span class="line-badge">' + g.line + '</span></td>' +
-      '<td>' + (topDest ? topDest[0] : '–') + '</td>' +
-      '<td class="num">' + g.count + '</td>' +
-      '<td class="num">' + (g.delayN ? (g.delaySum / g.delayN).toFixed(1) + ' min' : '–') + '</td>' +
-      '<td class="num">' + (g.worst ? g.worst.toFixed(1) + ' min' : '–') + '</td>' +
-      '<td class="num">' + (g.cancelled || '–') + '</td>';
-    lineBody.appendChild(tr);
+  var dateRows = Object.values(byDate).sort(function (a, b) { return b.date < a.date ? -1 : (b.date > a.date ? 1 : 0); });
+  var maxDayCount = dateRows.reduce(function (m, g) { return Math.max(m, g.count); }, 1);
+
+  var dayFilterEl = document.getElementById('dayFilter');
+  var dayHintEl = document.getElementById('dayHint');
+  var historyBody = document.querySelector('#historyTable tbody');
+
+  var ALL = '__ALL__';
+  var selectedDay = dateRows.length ? dateRows[0].date : ALL;
+
+  function renderHistoryTable() {
+    historyBody.innerHTML = dateRows.map(function (g) {
+      var d = new Date(g.date.slice(0, 4), g.date.slice(4, 6) - 1, g.date.slice(6, 8));
+      var wd = WEEKDAY_NAMES[(d.getDay() + 6) % 7];
+      var pct = Math.round((g.count / maxDayCount) * 100);
+      var active = g.date === selectedDay ? ' active' : '';
+      return (
+        '<tr data-date="' + g.date + '" class="' + active.trim() + '">' +
+        '<td class="num">' + fmtDate(g.date) + '</td>' +
+        '<td>' + wd + '</td>' +
+        '<td class="num bar-cell"><span>' + g.count + '</span><span class="bar-track"><span class="bar-fill" style="width:' + pct + '%"></span></span></td>' +
+        '<td class="num">' + (g.cancelled || '–') + '</td>' +
+        '<td class="num">' + (g.delayN ? (g.delaySum / g.delayN).toFixed(1) + ' min' : '–') + '</td>' +
+        '<td class="num">' + (g.worst ? g.worst.toFixed(1) + ' min' : '–') + '</td>' +
+        '</tr>'
+      );
+    }).join('');
+    historyBody.querySelectorAll('tr').forEach(function (tr) {
+      tr.addEventListener('click', function () {
+        selectedDay = tr.dataset.date;
+        dayFilterEl.value = selectedDay;
+        page = 0;
+        fullRender();
+      });
+    });
+  }
+
+  // Populate day selector
+  dayFilterEl.innerHTML =
+    '<option value="' + ALL + '">Alla dagar (' + dateRows.length + ')</option>' +
+    dateRows.map(function (g) { return '<option value="' + g.date + '">' + fmtDate(g.date) + '</option>'; }).join('');
+  dayFilterEl.value = selectedDay;
+  dayFilterEl.addEventListener('change', function () {
+    selectedDay = dayFilterEl.value;
+    page = 0;
+    fullRender();
   });
 
-  // ---- Detail log: filter, sort, paginate ----
+  // ---- Stat strip + per-line summary (scoped to selected day) ----
+  var statsEl = document.getElementById('statStrip');
+  var lineBody = document.querySelector('#lineTable tbody');
+
+  function renderScoped(scoped) {
+    var lines = new Set(scoped.map(function (r) { return r.line; }));
+    var cancelledLike = scoped.filter(isCancelledLike).length;
+    var delayVals = scoped.map(function (r) { return r.delayMin; }).filter(function (v) { return v !== null && v !== undefined && v > 0; });
+    var avgDelay = delayVals.length ? (delayVals.reduce(function (a, b) { return a + b; }, 0) / delayVals.length) : 0;
+    var worst = scoped.reduce(function (acc, r) {
+      return (r.delayMin !== null && r.delayMin !== undefined && r.delayMin > (acc ? acc.delayMin : -Infinity)) ? r : acc;
+    }, null);
+
+    var stats = [
+      { label: 'Registrerade avvikelser', value: scoped.length.toLocaleString('sv-SE'), sub: selectedDay === ALL ? 'alla dagar' : fmtDate(selectedDay), cls: '' },
+      { label: 'Distinkta linjer', value: lines.size, sub: 'påverkade', cls: '' },
+      { label: 'Inställda / hoppade', value: cancelledLike.toLocaleString('sv-SE'), sub: 'hållplatser & turer', cls: 'crit' },
+      { label: 'Snittförsening', value: avgDelay.toFixed(1) + ' min', sub: 'bland försenade', cls: '' },
+      { label: 'Värsta försening', value: worst ? fmtDelay(worst.delayMin) : '–', sub: worst ? ('linje ' + worst.line + ' → ' + worst.dest) : '', cls: 'crit' }
+    ];
+    statsEl.innerHTML = stats.map(function (s) {
+      return '<div class="stat' + (s.cls ? ' ' + s.cls : '') + '"><div class="label">' + s.label + '</div><div class="value">' + s.value + '</div><div class="sub">' + s.sub + '</div></div>';
+    }).join('');
+
+    var byLine = {};
+    scoped.forEach(function (r) {
+      var k = r.line || '?';
+      if (!byLine[k]) byLine[k] = { line: k, count: 0, delaySum: 0, delayN: 0, worst: 0, cancelled: 0, dests: {} };
+      var g = byLine[k];
+      g.count++;
+      if (r.delayMin) { g.delaySum += Math.max(r.delayMin, 0); g.delayN++; g.worst = Math.max(g.worst, r.delayMin); }
+      if (isCancelledLike(r)) g.cancelled++;
+      g.dests[r.dest] = (g.dests[r.dest] || 0) + 1;
+    });
+    var lineRows = Object.values(byLine).sort(function (a, b) { return b.count - a.count; });
+    lineBody.innerHTML = lineRows.map(function (g) {
+      var topDest = Object.entries(g.dests).sort(function (a, b) { return b[1] - a[1]; })[0];
+      return (
+        '<tr>' +
+        '<td><span class="line-badge">' + g.line + '</span></td>' +
+        '<td>' + (topDest ? topDest[0] : '–') + '</td>' +
+        '<td class="num">' + g.count + '</td>' +
+        '<td class="num">' + (g.delayN ? (g.delaySum / g.delayN).toFixed(1) + ' min' : '–') + '</td>' +
+        '<td class="num">' + (g.worst ? g.worst.toFixed(1) + ' min' : '–') + '</td>' +
+        '<td class="num">' + (g.cancelled || '–') + '</td>' +
+        '</tr>'
+      );
+    }).join('');
+  }
+
+  // ---- Detail log: filter, sort, paginate (scoped to selected day) ----
   var qEl = document.getElementById('q');
   var statusFilterEl = document.getElementById('statusFilter');
   var pageSizeEl = document.getElementById('pageSize');
@@ -510,10 +629,10 @@
   var sortDir = -1;
   var page = 0;
 
-  function applyFilters() {
+  function applyFilters(scoped) {
     var q = qEl.value.trim().toLowerCase();
     var statusVal = statusFilterEl.value;
-    var rows = data.filter(function (r) {
+    var rows = scoped.filter(function (r) {
       if (statusVal && r.status !== statusVal) return false;
       if (!q) return true;
       return [r.line, r.dest, r.stop, r.reason].some(function (f) {
@@ -531,15 +650,15 @@
     return rows;
   }
 
-  function render() {
-    var rows = applyFilters();
+  function renderLog(scoped) {
+    var rows = applyFilters(scoped);
     var pageSize = parseInt(pageSizeEl.value, 10);
     var pages = Math.max(1, Math.ceil(rows.length / pageSize));
     if (page >= pages) page = pages - 1;
     if (page < 0) page = 0;
     var slice = rows.slice(page * pageSize, page * pageSize + pageSize);
 
-    logCount.textContent = rows.length.toLocaleString('sv-SE') + ' rader (av ' + data.length.toLocaleString('sv-SE') + ' totalt)';
+    logCount.textContent = rows.length.toLocaleString('sv-SE') + ' rader (av ' + scoped.length.toLocaleString('sv-SE') + ' för vald dag)';
     logBody.innerHTML = slice.map(function (r) {
       var cls = statusClass(r.status);
       var reasonHtml = r.reason
@@ -570,19 +689,29 @@
     });
   }
 
-  qEl.addEventListener('input', function () { page = 0; render(); });
-  statusFilterEl.addEventListener('change', function () { page = 0; render(); });
-  pageSizeEl.addEventListener('change', function () { page = 0; render(); });
-  document.getElementById('prevBtn').addEventListener('click', function () { page--; render(); });
-  document.getElementById('nextBtn').addEventListener('click', function () { page++; render(); });
+  function fullRender() {
+    var scoped = selectedDay === ALL ? data : data.filter(function (r) { return r.date === selectedDay; });
+    dayHintEl.textContent = scoped.length.toLocaleString('sv-SE') + ' rader denna vy';
+    renderHistoryTable();
+    renderScoped(scoped);
+    renderLog(scoped);
+  }
+
+  qEl.addEventListener('input', function () { page = 0; fullRender(); });
+  statusFilterEl.addEventListener('change', function () { page = 0; fullRender(); });
+  pageSizeEl.addEventListener('change', function () { page = 0; fullRender(); });
+  document.getElementById('prevBtn').addEventListener('click', function () { page--; fullRender(); });
+  document.getElementById('nextBtn').addEventListener('click', function () { page++; fullRender(); });
   document.querySelectorAll('#logTable th.sortable').forEach(function (th) {
     th.addEventListener('click', function () {
       var key = th.dataset.key;
       if (sortKey === key) { sortDir *= -1; } else { sortKey = key; sortDir = key === 'line' ? 1 : -1; }
-      render();
+      fullRender();
     });
   });
 
-  render();
+  fullRender();
 })();
 </script>
+</body>
+</html>
