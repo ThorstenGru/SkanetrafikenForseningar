@@ -45,12 +45,15 @@ Ingen nätåtkomst eller API-nyckel krävs — läser bara den lokala databasen.
 Synka först ner senaste datan med `git pull` om du inte redan har den.
 
 ```bash
-python src/build_dashboard.py                # idag (lokal tid)
-python src/build_dashboard.py --date 20260705
+python src/build_dashboard.py                # hela historiken, med dagväljare i UI:t
+python src/build_dashboard.py --date 20260705 # bara en dag (mindre fil när historiken vuxit sig stor)
 python src/build_dashboard.py --out annan_fil.html
 ```
 
-Öppna den resulterande `dashboard.html` direkt i en webbläsare.
+Öppna den resulterande `dashboard.html` direkt i en webbläsare. Överst finns
+en "Historik per dag"-tabell — klicka en rad för att zooma in på den dagen,
+eller använd "Visar dag"-väljaren. Allt annat (statistik, per linje, loggen)
+filtreras efter vald dag.
 
 ## Inspektera databasen direkt
 
