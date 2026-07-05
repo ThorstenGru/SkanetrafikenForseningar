@@ -152,39 +152,53 @@ Requires an original receipt (or digital receipt, not a copy).
 
 ## TODO — open design decisions before this becomes a calculation feature
 
-See the main conversation from 2026-07-05 for the full discussion.
-Decisions made so far:
+See the main conversation from 2026-07-05 for the full discussion. Final
+decisions (as of the second round, same day — the user revised #1, #2 and
+#3 after the first round):
 
-1. **Journey vs. single GTFS trip — PAUSED.** Skånetrafiken's rules apply to
-   a rider's whole *journey* (which can include transfers) to the *final
-   destination*, not necessarily a single vehicle trip in our schema.
-   Computing "expected compensation" per row in the `delays` table (a
-   single trip) would be a simplification/illustration, not an exact
-   representation of a real rider's claim — especially since period-ticket
-   compensation requires the rider to have "specifically arranged
-   themselves" for that exact journey. **User decided (2026-07-05) to pause
-   this decision and revisit later**, rather than choose between "every
-   trip network-wide, illustrative" and "only journeys I define personally".
-2. **Which delay value to use — DECIDED: largest observed delay
-   (`max_abs_delay_sec`)**, not the delay at the final stop. Note: this is
-   *not* what Skånetrafiken's rule literally measures (which is delay at
-   the final destination specifically) — a claim based on this figure could
-   be legitimately reduced or challenged if the actual final-stop delay was
-   lower. Flagged to the user as a trade-off; they chose this option anyway.
-3. **km calculation — DECIDED: real driving-route distance by the fastest
-   car route** (not the transit vehicle's own path, not straight-line
-   haversine). This actually matches the rule better than either of the
-   originally-proposed options: Skånetrafiken reimburses "the driving
-   distance corresponding to the delayed journey" (den körsträcka som
-   motsvarar den försenade resan), i.e. how far you'd drive by car between
-   the same two points — not the bus/train's own route length. Needs a
-   routing API (e.g. OSRM) to compute driving distance between each trip's
-   first and last stop; not yet implemented — see task tracking.
-4. **`missing_trips`/coverage check — DECIDED: redesign completely.** Only
-   ~5% of all scheduled trips ever appear in the TripUpdates feed
-   (empirically verified 2026-07-05). The original "scheduled minus seen"
-   diff would flag ~95% of completely normal, on-time traffic as "never
-   seen" — not a real coverage gap. Redesign direction: establish a
-   per-line baseline visibility rate first, then flag only genuine
-   deviations from *that line's own* typical visibility. Not yet
-   implemented — see [ARCHITECTURE.md](ARCHITECTURE.md).
+1. **Journey model — DECIDED: per individual trip, network-wide,
+   illustrative.** Each row in the dashboard represents one GTFS trip
+   (start to end of that specific vehicle run), not a personally-defined
+   multi-leg journey. Simpler to build, gives network-wide visibility, but
+   is still an illustration rather than an exact representation of a real
+   rider's claim — a real claim requires the rider to have "specifically
+   arranged themselves" for that exact journey. **Implemented.**
+2. **Which delay value to show — DECIDED: both, clearly labeled.** The
+   dashboard shows two distinct columns per trip:
+   - *Delay at final stop* — the delay when the trip actually reached its
+     own final destination (or blank/"final stop not recorded" if that
+     stop never appeared in the feed at all). This is what Skånetrafiken's
+     rule literally measures ("delay to your final destination").
+   - *Max delay observed* — the largest delay seen anywhere along the trip,
+     across all its stops and polls. Can be higher than the final delay if
+     time was made up before arrival, or the only data point available if
+     the final stop was never captured. **Implemented.**
+3. **km calculation — DECIDED: real distance from GTFS `shapes.txt`/
+   `stop_times.txt`, not a routing API.** Verified empirically (2026-07-05)
+   that Skånetrafiken populates `shape_dist_traveled` in `stop_times.txt`
+   with real, accurate distances (checked against a known ~185 km regional
+   route). Distance per trip = `shape_dist_traveled` at the last stop minus
+   at the first stop. This is Skånetrafiken's own published distance along
+   the route — no external routing API/account needed. For rail/tram this
+   is track distance, which may differ from a driving-by-road distance;
+   documented as a known approximation rather than adding a third-party
+   dependency. **Implemented** — see `distance_km` in
+   [DATA_DICTIONARY.md](DATA_DICTIONARY.md).
+4. **Coverage check — DECIDED: redesign completely.** Only ~5% of all
+   scheduled trips ever appear in the TripUpdates feed (empirically
+   verified 2026-07-05). The original "scheduled minus seen" diff would
+   flag ~95% of completely normal, on-time traffic as "never seen" — not a
+   real coverage gap. Redesigned as per-line baseline visibility rates,
+   flagging only genuine deviations from *that line's own* typical
+   visibility. **Implemented** — see [ARCHITECTURE.md](ARCHITECTURE.md).
+5. **Scope — DECIDED: only Skånetrafiken trips valid with the Sommarbiljett.**
+   The Ven ferry and any trip touching a Danish stop (Öresundsbron/
+   Copenhagen-bound) are excluded network-wide, not just from a future
+   compensation feature — see `sommarticket_valid` in
+   [DATA_DICTIONARY.md](DATA_DICTIONARY.md). **Implemented.**
+
+**Not yet built:** an actual compensation-amount calculation (SEK values
+per the price-deduction tiers and car/taxi reimbursement caps above) — the
+underlying data (final-stop delay, max delay, distance, vehicle type,
+Sommarbiljett scope) is now all in place for it, but the calculation itself
+hasn't been wired up yet.

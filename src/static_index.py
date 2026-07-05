@@ -1,12 +1,24 @@
 """Download and cache Trafiklab's static GTFS Regional data, then distill it
-into a small SQLite index (routes, stops, per-trip destination, and calendar
-service-day rules) that we keep committed to the repo. The raw GTFS zip
-(~300 MB uncompressed) is downloaded to a scratch directory and deleted
-again — it is never committed.
+into a small SQLite index (routes, stops, per-trip destination, distance,
+and calendar service-day rules) that we keep committed to the repo. The raw
+GTFS zip (~300 MB uncompressed) is downloaded to a scratch directory and
+deleted again — it is never committed.
 
 The calendar/calendar_dates tables exist so coverage_check.py can answer
 "which trip_ids were actually scheduled to run on date X" without needing
 the raw stop_times.txt.
+
+Per-trip distance uses `shape_dist_traveled` straight from stop_times.txt
+(Skånetrafiken's own published distance along the route) — verified
+2026-07-05 against a known ~185 km regional route and it checks out. No
+external routing API needed. For rail/tram this is the distance along the
+track, not necessarily the same as a driving distance by road; documented
+as a known approximation rather than adding a third-party dependency.
+
+Sommarbiljetten does not cover the Öresund bridge/Denmark or the Ven ferry
+(see docs/COMPENSATION_RULES.md) — trip_meta.sommarticket_valid flags trips
+that are out of scope for that ticket, so downstream tooling can filter
+to only Sommarbiljett-valid journeys.
 """
 
 import csv
@@ -21,6 +33,16 @@ import zipfile
 import requests
 
 import config
+
+# Danish stops carry a distinct zone segment in their stop_id
+# (e.g. "9021012045007000" = København H). Verified empirically 2026-07-05
+# against all Öresund-side stations (Ørestad, CPH Airport, København H,
+# Tårnby, København Østerport/Nørreport, Espergærde).
+DENMARK_ZONE = "045"
+
+
+def _is_danish_stop(stop_id):
+    return bool(stop_id) and len(stop_id) >= 10 and stop_id[7:10] == DENMARK_ZONE
 
 
 def _is_index_fresh():
@@ -51,20 +73,48 @@ def _download_and_extract_raw():
     print("Static GTFS extracted to %s" % config.RAW_STATIC_CACHE_DIR)
 
 
-def _build_trip_destinations(raw_dir):
+def _scan_stop_times(raw_dir):
     """Single streaming pass over stop_times.txt: for each trip_id, find the
-    stop with the highest stop_sequence (the trip's final destination)."""
+    first and last stop (by stop_sequence) and the total distance travelled
+    (from shape_dist_traveled, in meters -> converted to km)."""
     stop_times_path = os.path.join(raw_dir, "stop_times.txt")
-    last_stop = {}  # trip_id -> (max_seq, stop_id)
+    first_stop = {}   # trip_id -> (min_seq, stop_id)
+    last_stop = {}     # trip_id -> (max_seq, stop_id)
+    dist_range = {}    # trip_id -> [min_dist, max_dist] (meters, or None if missing anywhere)
     with open(stop_times_path, "r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
             trip_id = row["trip_id"]
             seq = int(row["stop_sequence"])
-            current = last_stop.get(trip_id)
-            if current is None or seq > current[0]:
+
+            current_first = first_stop.get(trip_id)
+            if current_first is None or seq < current_first[0]:
+                first_stop[trip_id] = (seq, row["stop_id"])
+
+            current_last = last_stop.get(trip_id)
+            if current_last is None or seq > current_last[0]:
                 last_stop[trip_id] = (seq, row["stop_id"])
-    return last_stop
+
+            dist_raw = row.get("shape_dist_traveled")
+            entry = dist_range.get(trip_id)
+            if entry is not None and entry is False:
+                continue  # already known-incomplete for this trip
+            if dist_raw in (None, ""):
+                dist_range[trip_id] = False  # mark incomplete — don't compute a distance for it
+                continue
+            dist = float(dist_raw)
+            if entry is None or entry is False:
+                dist_range[trip_id] = [dist, dist]
+            else:
+                entry[0] = min(entry[0], dist)
+                entry[1] = max(entry[1], dist)
+
+    distance_km = {}
+    for trip_id, entry in dist_range.items():
+        if entry and entry is not False:
+            distance_km[trip_id] = round((entry[1] - entry[0]) / 1000, 3)
+
+    return first_stop, last_stop, distance_km
 
 
 def rebuild_index():
@@ -90,7 +140,7 @@ def rebuild_index():
             for row in csv.DictReader(f):
                 stops[row["stop_id"]] = row.get("stop_name", "")
 
-        last_stop = _build_trip_destinations(config.RAW_STATIC_CACHE_DIR)
+        first_stop, last_stop, distance_km = _scan_stop_times(config.RAW_STATIC_CACHE_DIR)
 
         trips_path = os.path.join(config.RAW_STATIC_CACHE_DIR, "trips.txt")
         os.makedirs(config.DATA_DIR, exist_ok=True)
@@ -103,7 +153,9 @@ def rebuild_index():
         conn.execute(
             "CREATE TABLE trip_meta ("
             "trip_id TEXT PRIMARY KEY, route_id TEXT, direction_id INTEGER, service_id TEXT, "
-            "destination_stop_id TEXT, destination_stop_name TEXT, final_stop_sequence INTEGER)"
+            "trip_number TEXT, "
+            "origin_stop_id TEXT, destination_stop_id TEXT, destination_stop_name TEXT, "
+            "final_stop_sequence INTEGER, distance_km REAL, sommarticket_valid INTEGER)"
         )
         conn.execute(
             "CREATE TABLE calendar ("
@@ -121,17 +173,25 @@ def rebuild_index():
             trip_rows = []
             for row in csv.DictReader(f):
                 trip_id = row["trip_id"]
+                _, origin_stop_id = first_stop.get(trip_id, (None, None))
                 dest_seq, dest_stop_id = last_stop.get(trip_id, (None, None))
+                route_type = routes.get(row.get("route_id", ""), (None, None, None))[2]
+                is_ferry = route_type == 1000
+                is_cross_border = _is_danish_stop(origin_stop_id) or _is_danish_stop(dest_stop_id)
                 trip_rows.append((
                     trip_id,
                     row.get("route_id", ""),
                     int(row["direction_id"]) if row.get("direction_id") not in (None, "") else None,
                     row.get("service_id", ""),
+                    row.get("samtrafiken_internal_trip_number", ""),
+                    origin_stop_id,
                     dest_stop_id,
                     stops.get(dest_stop_id, "") if dest_stop_id else "",
                     dest_seq,
+                    distance_km.get(trip_id),
+                    0 if (is_ferry or is_cross_border) else 1,
                 ))
-            conn.executemany("INSERT INTO trip_meta VALUES (?, ?, ?, ?, ?, ?, ?)", trip_rows)
+            conn.executemany("INSERT INTO trip_meta VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", trip_rows)
 
         calendar_path = os.path.join(config.RAW_STATIC_CACHE_DIR, "calendar.txt")
         calendar_rows = []

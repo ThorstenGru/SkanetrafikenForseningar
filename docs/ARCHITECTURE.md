@@ -104,13 +104,14 @@ for a subset of vehicles (likely those with GPS/AVL tracking), not for
 every scheduled trip. A naive "scheduled minus seen" comparison would flag
 ~95% of completely normal, on-time service as "missing", which is false.
 
-The fix in progress: establish a **per-line baseline visibility rate**
-first (how often does line X normally appear in the feed at all, over a
-rolling window), then only flag a trip as a genuine anomaly if it deviates
-from *that line's own* typical visibility — not from 100% schedule
-coverage. See `src/coverage_check.py` for the current state of this
-redesign; treat any figures from `missing_trips` as unreliable until that
-lands.
+The fix: `coverage_check.py` establishes a **per-line baseline visibility
+rate** first (`line_daily_visibility` — how often does line X normally
+appear in the feed at all, over a rolling window), then only flags a line-
+day as a genuine anomaly (`line_visibility_anomalies`) if it deviates well
+below *that line's own* typical visibility — not from 100% schedule
+coverage. Requires `MIN_BASELINE_DAYS` (7) of prior history per line before
+it can evaluate anything, so `line_visibility_anomalies` stays empty for
+the first couple of weeks after launch — that's correct, not a bug.
 
 ## Reason matching (ServiceAlerts)
 
@@ -149,3 +150,13 @@ dependencies). The history-per-day trend is a cheap SQL aggregate over the
 full 45-day retention window; the raw detail log defaults to the last 3
 days (or one specific day via `--date`) to keep the exported HTML bounded
 as history grows — see [RUNBOOK.md](RUNBOOK.md#generate-a-dashboard).
+
+The log is **one row per trip** (`trip_id` + `trip_start_date`), not per
+stop: `fetch_detail_rows()` groups all of a trip's per-stop `delays` rows in
+Python, taking the final stop's own delay (`finalDelayMin`) separately from
+the largest delay seen anywhere along the trip (`maxDelayMin`) — see the
+"two delay metrics" decision in [COMPENSATION_RULES.md](COMPENSATION_RULES.md).
+Both the trend and the log are scoped to `sommarticket_valid = true` only —
+Sommarbiljetten doesn't cover the Ven ferry or Öresund/Denmark-bound trips,
+so those never show up in the dashboard at all, not just in a future
+compensation calculation.

@@ -14,6 +14,9 @@ duplicated) on every new poll of the same key.
 | `route_id` | TEXT | Route ID from the static data. |
 | `route_short_name` | TEXT | Line number, e.g. `"817"`. |
 | `vehicle_type` | TEXT | `BUS` / `RAIL` / `TRAM` / `FERRY` / `METRO` / `DEMAND_RESPONSIVE_BUS` (Närtrafik) / `UNKNOWN`. Derived from GTFS `route_type` (Skånetrafiken uses extended hierarchical vehicle-type codes: 100=rail, 700=bus, 900=tram, 1000=ferry, 1501=demand-responsive — see `config.ROUTE_TYPE_LABELS`). |
+| `trip_number` | TEXT | The operational train/bus number as shown in Skånetrafiken's own app (e.g. "1725" for a Pågatåg) — from GTFS `trips.txt`'s `samtrafiken_internal_trip_number`, populated for 100% of trips. Verified against a real screenshot match. |
+| `distance_km` | REAL | Total distance travelled for the whole trip pattern, computed from `shape_dist_traveled` in `stop_times.txt` (Skånetrafiken's own published distance, not a third-party routing estimate). For rail/tram this is track distance, which may differ from road-driving distance. `NULL` if `shape_dist_traveled` is missing for any stop on the trip. |
+| `sommarticket_valid` | BOOLEAN | False for the Ven ferry and any trip touching a Danish stop (Öresundsbron/Copenhagen-bound services) — Sommarbiljetten doesn't cover either. Danish stops are identified by a zone-code segment in `stop_id` (positions 7:10 == `"045"`), verified empirically against known Öresund-side stations. The dashboard and history trend are scoped to `sommarticket_valid = true` only. |
 | `direction_id` | SMALLINT | 0/1, GTFS direction. |
 | `destination_stop_name` | TEXT | The trip's final destination, derived from the last stop in `stop_times.txt`. |
 | `stop_id` | TEXT | Stop ID for this row. |
@@ -38,7 +41,7 @@ stops can be `SKIPPED` while the trip otherwise runs).
 | Column | Description |
 |---|---|
 | `trip_id`, `trip_start_date` | See above. |
-| `route_id`, `route_short_name`, `vehicle_type`, `destination_stop_name` | See above. |
+| `route_id`, `route_short_name`, `vehicle_type`, `trip_number`, `distance_km`, `sommarticket_valid`, `destination_stop_name` | See above. |
 | `first_seen_at`, `last_seen_at`, `poll_count` | See above. |
 
 ### `seen_trips`

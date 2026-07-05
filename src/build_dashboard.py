@@ -64,18 +64,27 @@ def best_reason(lookups, trip_id, route_id, stop_id):
     return None
 
 
-def classify(delay_sec, stop_schedule_relationship, is_final_stop):
-    if stop_schedule_relationship == "SKIPPED":
-        return "SKIPPED_STOP" if not is_final_stop else "PARTIAL_CANCELLATION"
-    if delay_sec and delay_sec > 60:
+def classify_trip(final_relationship, final_delay_sec, is_cancelled):
+    """Status is based on the FINAL STOP specifically (what Skånetrafiken's
+    compensation rule actually measures — delay "to your final destination"),
+    not on any intermediate stop. See docs/COMPENSATION_RULES.md."""
+    if is_cancelled:
+        return "CANCELLED_TRIP"
+    if final_relationship == "SKIPPED":
+        return "PARTIAL_CANCELLATION"  # never reached its own final stop
+    if final_relationship is None:
+        return "UNKNOWN_FINAL_STATUS"  # final stop never captured in the feed at all
+    if final_delay_sec and final_delay_sec > 60:
         return "DELAYED"
-    if delay_sec and delay_sec < -60:
+    if final_delay_sec and final_delay_sec < -60:
         return "EARLY"
     return "ON_TIME"
 
 
 def fetch_history_trend(cur):
-    """Cheap daily aggregate over the full retention window."""
+    """Cheap daily aggregate over the full retention window. Scoped to
+    Sommarbiljett-valid trips only (excludes the Ven ferry and any
+    Öresund/Denmark-bound service — see docs/COMPENSATION_RULES.md)."""
     cur.execute(
         """SELECT
                trip_start_date,
@@ -84,11 +93,12 @@ def fetch_history_trend(cur):
                AVG(GREATEST(COALESCE(departure_delay_sec, arrival_delay_sec, 0), 0)) FILTER (WHERE COALESCE(departure_delay_sec, arrival_delay_sec, 0) > 60) AS avg_delay_sec,
                MAX(GREATEST(COALESCE(departure_delay_sec, arrival_delay_sec, 0), 0)) AS worst_delay_sec
            FROM delays
+           WHERE sommarticket_valid = true
            GROUP BY trip_start_date"""
     )
     delay_agg = {row[0]: row[1:] for row in cur.fetchall()}
 
-    cur.execute("SELECT trip_start_date, COUNT(*) FROM trip_cancellations GROUP BY trip_start_date")
+    cur.execute("SELECT trip_start_date, COUNT(*) FROM trip_cancellations WHERE sommarticket_valid = true GROUP BY trip_start_date")
     cancel_agg = dict(cur.fetchall())
 
     all_dates = set(delay_agg) | set(cancel_agg)
@@ -129,56 +139,90 @@ def fetch_recent_line_anomalies(cur, limit=50):
 
 
 def fetch_detail_rows(cur, start_date, end_date, single_date):
+    """One row per (trip_id, trip_start_date) — not per stop. Two delay
+    metrics are tracked deliberately, per the user's decision (2026-07-05):
+      - finalDelayMin: the delay AT THE FINAL STOP specifically. This is
+        what Skånetrafiken's compensation rule literally measures ("delay
+        to your final destination") — see docs/COMPENSATION_RULES.md.
+      - maxDelayMin: the largest delay observed anywhere along the trip,
+        across all its stops and all polls. Can be higher than the final
+        delay if time was made up before arrival.
+    Scoped to sommarticket_valid=true only (excludes the Ven ferry and any
+    Öresund/Denmark-bound service, which Sommarbiljetten doesn't cover)."""
     lookups = build_alert_lookups(cur)
-    out = []
 
     if single_date:
-        where, params = "WHERE trip_start_date = %s", (single_date,)
+        where, params = "trip_start_date = %s", (single_date,)
     else:
-        where, params = "WHERE trip_start_date BETWEEN %s AND %s", (start_date, end_date)
+        where, params = "trip_start_date BETWEEN %s AND %s", (start_date, end_date)
+
+    trips = {}
 
     cur.execute(
-        """SELECT trip_id, trip_start_date, route_id, route_short_name, vehicle_type, destination_stop_name,
-                  stop_id, stop_name, stop_sequence, is_final_stop, stop_schedule_relationship,
-                  arrival_delay_sec, departure_delay_sec, arrival_time, departure_time,
-                  scheduled_arrival, scheduled_departure, first_seen_at, last_seen_at, poll_count
-           FROM delays %s""" % where,
-        params,
-    )
-    for (trip_id, d, route_id, route_short_name, vehicle_type, dest, stop_id, stop_name, seq, is_final,
-         stop_rel, arr_delay, dep_delay, arr_time, dep_time, sched_arr, sched_dep,
-         first_seen, last_seen, polls) in cur.fetchall():
-        delay_sec = dep_delay if dep_delay not in (None, 0) else arr_delay
-        out.append({
-            "trip": trip_id, "date": d.strftime("%Y%m%d"), "line": route_short_name,
-            "vehicleType": vehicle_type or "UNKNOWN", "dest": dest,
-            "stop": stop_name, "seq": seq, "final": bool(is_final),
-            "status": classify(delay_sec, stop_rel, is_final),
-            "relationship": stop_rel,
-            "delayMin": round(delay_sec / 60, 1) if delay_sec is not None else None,
-            "schedDep": fmt_time(sched_dep), "actDep": fmt_time(dep_time),
-            "schedArr": fmt_time(sched_arr), "actArr": fmt_time(arr_time),
-            "reason": best_reason(lookups, trip_id, route_id, stop_id),
-            "firstSeen": first_seen.isoformat(), "lastSeen": last_seen.isoformat(), "polls": polls,
-        })
-
-    cur.execute(
-        """SELECT trip_id, trip_start_date, route_id, route_short_name, vehicle_type, destination_stop_name,
+        """SELECT trip_id, trip_start_date, route_id, route_short_name, vehicle_type, trip_number,
+                  distance_km, destination_stop_name, stop_id, stop_sequence, is_final_stop,
+                  stop_schedule_relationship, arrival_delay_sec, departure_delay_sec, max_abs_delay_sec,
                   first_seen_at, last_seen_at, poll_count
-           FROM trip_cancellations %s""" % where,
+           FROM delays WHERE sommarticket_valid = true AND %s""" % where,
         params,
     )
-    for trip_id, d, route_id, route_short_name, vehicle_type, dest, first_seen, last_seen, polls in cur.fetchall():
-        out.append({
-            "trip": trip_id, "date": d.strftime("%Y%m%d"), "line": route_short_name,
-            "vehicleType": vehicle_type or "UNKNOWN", "dest": dest,
-            "stop": "(WHOLE TRIP)", "seq": None, "final": None, "status": "CANCELLED_TRIP",
-            "relationship": "CANCELED", "delayMin": None, "schedDep": None, "actDep": None,
-            "schedArr": None, "actArr": None,
-            "reason": best_reason(lookups, trip_id, route_id, None),
-            "firstSeen": first_seen.isoformat(), "lastSeen": last_seen.isoformat(), "polls": polls,
-        })
+    for (trip_id, d, route_id, route_short_name, vehicle_type, trip_number, distance_km, dest,
+         stop_id, seq, is_final, stop_rel, arr_delay, dep_delay, max_abs_delay,
+         first_seen, last_seen, polls) in cur.fetchall():
+        key = (trip_id, d)
+        t = trips.get(key)
+        if t is None:
+            t = {
+                "trip": trip_id, "date": d.strftime("%Y%m%d"), "line": route_short_name,
+                "vehicleType": vehicle_type or "UNKNOWN", "tripNumber": trip_number, "dest": dest,
+                "distanceKm": distance_km, "route_id": route_id, "stop_ids": [],
+                "final_relationship": None, "final_delay_sec": None, "max_delay_sec": None,
+                "is_cancelled": False, "firstSeen": first_seen, "lastSeen": last_seen, "polls": 0,
+            }
+            trips[key] = t
+        t["stop_ids"].append(stop_id)
+        t["polls"] += polls
+        t["firstSeen"] = min(t["firstSeen"], first_seen)
+        t["lastSeen"] = max(t["lastSeen"], last_seen)
+        t["max_delay_sec"] = max(t["max_delay_sec"] or 0, max_abs_delay or 0)
+        if is_final:
+            t["final_relationship"] = stop_rel
+            t["final_delay_sec"] = dep_delay if dep_delay not in (None, 0) else arr_delay
 
+    cur.execute(
+        """SELECT trip_id, trip_start_date, route_id, route_short_name, vehicle_type, trip_number,
+                  distance_km, destination_stop_name, first_seen_at, last_seen_at, poll_count
+           FROM trip_cancellations WHERE sommarticket_valid = true AND %s""" % where,
+        params,
+    )
+    for (trip_id, d, route_id, route_short_name, vehicle_type, trip_number, distance_km, dest,
+         first_seen, last_seen, polls) in cur.fetchall():
+        key = (trip_id, d)
+        trips[key] = {
+            "trip": trip_id, "date": d.strftime("%Y%m%d"), "line": route_short_name,
+            "vehicleType": vehicle_type or "UNKNOWN", "tripNumber": trip_number, "dest": dest,
+            "distanceKm": distance_km, "route_id": route_id, "stop_ids": [],
+            "final_relationship": None, "final_delay_sec": None, "max_delay_sec": None,
+            "is_cancelled": True, "firstSeen": first_seen, "lastSeen": last_seen, "polls": polls,
+        }
+
+    out = []
+    for t in trips.values():
+        reason = best_reason(lookups, t["trip"], t["route_id"], None)
+        if reason is None:
+            for sid in t["stop_ids"]:
+                reason = best_reason(lookups, t["trip"], t["route_id"], sid)
+                if reason:
+                    break
+        out.append({
+            "trip": t["trip"], "date": t["date"], "line": t["line"], "vehicleType": t["vehicleType"],
+            "tripNumber": t["tripNumber"], "dest": t["dest"], "distanceKm": t["distanceKm"],
+            "status": classify_trip(t["final_relationship"], t["final_delay_sec"], t["is_cancelled"]),
+            "finalDelayMin": round(t["final_delay_sec"] / 60, 1) if t["final_delay_sec"] is not None else None,
+            "maxDelayMin": round(t["max_delay_sec"] / 60, 1) if t["max_delay_sec"] else None,
+            "reason": reason,
+            "firstSeen": t["firstSeen"].isoformat(), "lastSeen": t["lastSeen"].isoformat(), "polls": t["polls"],
+        })
     return out
 
 

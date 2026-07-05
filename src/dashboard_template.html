@@ -230,6 +230,7 @@
   .chip.delayed { background: rgba(242, 169, 59, 0.15); color: var(--amber-bright); }
   .chip.skipped, .chip.canceled { background: var(--red-dim); color: #ff8a72; }
   .chip.ok { background: var(--green-dim); color: var(--green); }
+  .chip.unknown { background: var(--panel-alt); color: var(--ink-faint); }
 
   .reason {
     max-width: 360px;
@@ -380,28 +381,6 @@
 
   <section class="stats" id="statStrip"></section>
 
-  <section>
-    <div class="section-head">
-      <h2>By line</h2>
-      <span class="hint">Sorted by number of deviations</span>
-    </div>
-    <div class="table-scroll">
-      <table id="lineTable">
-        <thead>
-          <tr>
-            <th>Line</th>
-            <th>Most common destination</th>
-            <th>Deviations</th>
-            <th>Avg. delay</th>
-            <th>Worst</th>
-            <th>Cancelled/skipped</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </div>
-  </section>
-
   <section id="anomaliesSection" style="display:none;">
     <div class="section-head">
       <h2>Line visibility anomalies</h2>
@@ -431,16 +410,17 @@
 
     <div class="controls">
       <label for="q">Search</label>
-      <input type="text" id="q" placeholder="Line, stop, destination, reason…" />
+      <input type="text" id="q" placeholder="Line, trip number, destination, reason…" />
 
       <label for="statusFilter">Status</label>
       <select id="statusFilter">
         <option value="">All</option>
         <option value="DELAYED">Delayed</option>
-        <option value="SKIPPED_STOP">Skipped stop</option>
         <option value="PARTIAL_CANCELLATION">Cancelled (doesn't reach destination)</option>
         <option value="CANCELLED_TRIP">Cancelled (whole trip)</option>
+        <option value="UNKNOWN_FINAL_STATUS">Final stop not recorded</option>
         <option value="EARLY">Early</option>
+        <option value="ON_TIME">On time</option>
       </select>
 
       <label for="vehicleFilter">Vehicle</label>
@@ -461,13 +441,15 @@
       <table id="logTable">
         <thead>
           <tr>
+            <th class="sortable" data-key="date">Date<span class="arrow"></span></th>
             <th class="sortable" data-key="line">Line<span class="arrow"></span></th>
             <th class="sortable" data-key="vehicleType">Vehicle<span class="arrow"></span></th>
-            <th class="sortable" data-key="stop">Trip<span class="arrow"></span></th>
+            <th class="sortable" data-key="tripNumber">Trip #<span class="arrow"></span></th>
+            <th class="sortable" data-key="dest">Destination<span class="arrow"></span></th>
+            <th class="sortable" data-key="distanceKm">Distance<span class="arrow"></span></th>
             <th class="sortable" data-key="status">Status<span class="arrow"></span></th>
-            <th class="sortable" data-key="delayMin">Delay<span class="arrow"></span></th>
-            <th class="sortable" data-key="schedSort">Scheduled<span class="arrow"></span></th>
-            <th class="sortable" data-key="actSort">Actual<span class="arrow"></span></th>
+            <th class="sortable" data-key="finalDelayMin">Delay at final stop<span class="arrow"></span></th>
+            <th class="sortable" data-key="maxDelayMin">Max delay observed<span class="arrow"></span></th>
             <th class="sortable" data-key="reason">Reason (best-effort match)<span class="arrow"></span></th>
             <th class="sortable" data-key="lastSeen">Last seen<span class="arrow"></span></th>
             <th class="sortable" data-key="polls">Polls<span class="arrow"></span></th>
@@ -513,28 +495,26 @@
       );
     }).join('');
   }
-  data.forEach(function (r) {
-    r.schedSort = r.schedDep || r.schedArr || '';
-    r.actSort = r.actDep || r.actArr || '';
-  });
-
   function statusClass(status) {
     if (status === 'DELAYED') return 'delayed';
-    if (status === 'SKIPPED_STOP' || status === 'PARTIAL_CANCELLATION' || status === 'CANCELLED_TRIP') return 'skipped';
-    if (status === 'EARLY') return 'ok';
+    if (status === 'PARTIAL_CANCELLATION' || status === 'CANCELLED_TRIP') return 'skipped';
+    if (status === 'UNKNOWN_FINAL_STATUS') return 'unknown';
     return 'ok';
   }
   function statusLabel(status) {
     return ({
       'DELAYED': 'Delayed',
-      'SKIPPED_STOP': 'Skipped stop',
-      'PARTIAL_CANCELLATION': 'Cancelled (partial)',
+      'PARTIAL_CANCELLATION': "Cancelled (doesn't reach destination)",
       'CANCELLED_TRIP': 'Cancelled (whole trip)',
+      'UNKNOWN_FINAL_STATUS': 'Final stop not recorded',
       'EARLY': 'Early',
       'ON_TIME': 'On time'
     })[status] || status;
   }
-  function fmtTime(hhmm) { return hhmm || '–'; }
+  function fmtKm(km) {
+    if (km === null || km === undefined) return '–';
+    return km.toFixed(1) + ' km';
+  }
   function fmtDelay(m) {
     if (m === null || m === undefined) return '–';
     var sign = m > 0 ? '+' : '';
@@ -552,7 +532,7 @@
     return yyyymmdd.slice(0, 4) + '-' + yyyymmdd.slice(4, 6) + '-' + yyyymmdd.slice(6, 8);
   }
   function isCancelledLike(r) {
-    return r.status === 'CANCELLED_TRIP' || r.status === 'PARTIAL_CANCELLATION' || r.status === 'SKIPPED_STOP';
+    return r.status === 'CANCELLED_TRIP' || r.status === 'PARTIAL_CANCELLATION';
   }
 
   var lastSeenMax = data.reduce(function (acc, r) { return (r.lastSeen && r.lastSeen > acc) ? r.lastSeen : acc; }, '');
@@ -628,53 +608,27 @@
     fullRender();
   });
 
-  // ---- Stat strip + per-line summary (scoped to selected day) ----
+  // ---- Stat strip (scoped to selected day) ----
   var statsEl = document.getElementById('statStrip');
-  var lineBody = document.querySelector('#lineTable tbody');
 
   function renderScoped(scoped) {
     var lines = new Set(scoped.map(function (r) { return r.line; }));
     var cancelledLike = scoped.filter(isCancelledLike).length;
-    var delayVals = scoped.map(function (r) { return r.delayMin; }).filter(function (v) { return v !== null && v !== undefined && v > 0; });
+    var delayVals = scoped.map(function (r) { return r.finalDelayMin; }).filter(function (v) { return v !== null && v !== undefined && v > 0; });
     var avgDelay = delayVals.length ? (delayVals.reduce(function (a, b) { return a + b; }, 0) / delayVals.length) : 0;
     var worst = scoped.reduce(function (acc, r) {
-      return (r.delayMin !== null && r.delayMin !== undefined && r.delayMin > (acc ? acc.delayMin : -Infinity)) ? r : acc;
+      return (r.maxDelayMin !== null && r.maxDelayMin !== undefined && r.maxDelayMin > (acc ? acc.maxDelayMin : -Infinity)) ? r : acc;
     }, null);
 
     var stats = [
-      { label: 'Recorded deviations', value: scoped.length.toLocaleString('en-GB'), sub: selectedDay === ALL ? 'all days' : fmtDate(selectedDay), cls: '' },
+      { label: 'Recorded trips', value: scoped.length.toLocaleString('en-GB'), sub: selectedDay === ALL ? 'all days' : fmtDate(selectedDay), cls: '' },
       { label: 'Distinct lines', value: lines.size, sub: 'affected', cls: '' },
-      { label: 'Cancelled / skipped', value: cancelledLike.toLocaleString('en-GB'), sub: 'stops & trips', cls: 'crit' },
-      { label: 'Avg. delay', value: avgDelay.toFixed(1) + ' min', sub: 'among delayed', cls: '' },
-      { label: 'Worst delay', value: worst ? fmtDelay(worst.delayMin) : '–', sub: worst ? ('line ' + worst.line + ' → ' + worst.dest) : '', cls: 'crit' }
+      { label: 'Cancelled', value: cancelledLike.toLocaleString('en-GB'), sub: 'whole or partial', cls: 'crit' },
+      { label: 'Avg. delay at final stop', value: avgDelay.toFixed(1) + ' min', sub: 'among delayed', cls: '' },
+      { label: 'Worst delay observed', value: worst ? fmtDelay(worst.maxDelayMin) : '–', sub: worst ? ('line ' + worst.line + ' → ' + worst.dest) : '', cls: 'crit' }
     ];
     statsEl.innerHTML = stats.map(function (s) {
       return '<div class="stat' + (s.cls ? ' ' + s.cls : '') + '"><div class="label">' + s.label + '</div><div class="value">' + s.value + '</div><div class="sub">' + s.sub + '</div></div>';
-    }).join('');
-
-    var byLine = {};
-    scoped.forEach(function (r) {
-      var k = r.line || '?';
-      if (!byLine[k]) byLine[k] = { line: k, count: 0, delaySum: 0, delayN: 0, worst: 0, cancelled: 0, dests: {} };
-      var g = byLine[k];
-      g.count++;
-      if (r.delayMin) { g.delaySum += Math.max(r.delayMin, 0); g.delayN++; g.worst = Math.max(g.worst, r.delayMin); }
-      if (isCancelledLike(r)) g.cancelled++;
-      if (r.dest) g.dests[r.dest] = (g.dests[r.dest] || 0) + 1;
-    });
-    var lineRows = Object.values(byLine).sort(function (a, b) { return b.count - a.count; });
-    lineBody.innerHTML = lineRows.map(function (g) {
-      var topDest = Object.entries(g.dests).sort(function (a, b) { return b[1] - a[1]; })[0];
-      return (
-        '<tr>' +
-        '<td><span class="line-badge">' + g.line + '</span></td>' +
-        '<td>' + (topDest ? topDest[0] : '–') + '</td>' +
-        '<td class="num">' + g.count + '</td>' +
-        '<td class="num">' + (g.delayN ? (g.delaySum / g.delayN).toFixed(1) + ' min' : '–') + '</td>' +
-        '<td class="num">' + (g.worst ? g.worst.toFixed(1) + ' min' : '–') + '</td>' +
-        '<td class="num">' + (g.cancelled || '–') + '</td>' +
-        '</tr>'
-      );
     }).join('');
   }
 
@@ -698,7 +652,7 @@
     return '<option value="' + vt + '">' + (VEHICLE_LABELS[vt] || vt) + '</option>';
   }).join('');
 
-  var sortKey = 'delayMin';
+  var sortKey = 'maxDelayMin';
   var sortDir = -1;
   var page = 0;
 
@@ -710,14 +664,15 @@
       if (statusVal && r.status !== statusVal) return false;
       if (vehicleVal && r.vehicleType !== vehicleVal) return false;
       if (!q) return true;
-      return [r.line, r.dest, r.stop, r.reason].some(function (f) {
+      return [r.line, r.tripNumber, r.dest, r.reason].some(function (f) {
         return f && String(f).toLowerCase().indexOf(q) !== -1;
       });
     });
     rows.sort(function (a, b) {
       var av = a[sortKey], bv = b[sortKey];
-      if (av === null || av === undefined) av = sortKey === 'delayMin' ? -Infinity : '';
-      if (bv === null || bv === undefined) bv = sortKey === 'delayMin' ? -Infinity : '';
+      var numeric = sortKey === 'finalDelayMin' || sortKey === 'maxDelayMin' || sortKey === 'distanceKm' || sortKey === 'polls';
+      if (av === null || av === undefined) av = numeric ? -Infinity : '';
+      if (bv === null || bv === undefined) bv = numeric ? -Infinity : '';
       if (av < bv) return -1 * sortDir;
       if (av > bv) return 1 * sortDir;
       return 0;
@@ -733,7 +688,7 @@
     if (page < 0) page = 0;
     var slice = rows.slice(page * pageSize, page * pageSize + pageSize);
 
-    logCount.textContent = rows.length.toLocaleString('en-GB') + ' rows (of ' + scoped.length.toLocaleString('en-GB') + ' for the selected day)';
+    logCount.textContent = rows.length.toLocaleString('en-GB') + ' trips (of ' + scoped.length.toLocaleString('en-GB') + ' for the selected day)';
     logBody.innerHTML = slice.map(function (r) {
       var cls = statusClass(r.status);
       var reasonHtml = r.reason
@@ -741,13 +696,15 @@
         : '<span class="reason none">unknown</span>';
       return (
         '<tr>' +
+        '<td class="num">' + fmtDate(r.date) + '</td>' +
         '<td><span class="line-badge">' + (r.line || '–') + '</span></td>' +
         '<td>' + (VEHICLE_LABELS[r.vehicleType] || r.vehicleType || '–') + '</td>' +
-        '<td><span class="dest-stop">' + r.stop + '</span><span class="dest-arrow">→</span>' + r.dest + '</td>' +
+        '<td class="num">' + (r.tripNumber || '–') + '</td>' +
+        '<td>' + (r.dest || '–') + '</td>' +
+        '<td class="num">' + fmtKm(r.distanceKm) + '</td>' +
         '<td><span class="chip ' + cls + '">' + statusLabel(r.status) + '</span></td>' +
-        '<td class="num">' + fmtDelay(r.delayMin) + '</td>' +
-        '<td class="num">' + fmtTime(r.schedDep || r.schedArr) + '</td>' +
-        '<td class="num">' + fmtTime(r.actDep || r.actArr) + '</td>' +
+        '<td class="num">' + fmtDelay(r.finalDelayMin) + '</td>' +
+        '<td class="num">' + fmtDelay(r.maxDelayMin) + '</td>' +
         '<td>' + reasonHtml + '</td>' +
         '<td class="num">' + fmtSeen(r.lastSeen) + '</td>' +
         '<td class="num">' + r.polls + '</td>' +
@@ -755,7 +712,7 @@
       );
     }).join('');
 
-    pageInfo.textContent = 'Sida ' + (page + 1) + ' / ' + pages;
+    pageInfo.textContent = 'Page ' + (page + 1) + ' / ' + pages;
     document.getElementById('prevBtn').disabled = page <= 0;
     document.getElementById('nextBtn').disabled = page >= pages - 1;
 

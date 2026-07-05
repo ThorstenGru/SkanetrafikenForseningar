@@ -22,16 +22,22 @@ def load_trip_meta(static_conn):
     route_types = dict(static_conn.execute("SELECT route_id, route_type FROM routes").fetchall())
     stops = dict(static_conn.execute("SELECT stop_id, stop_name FROM stops").fetchall())
     trip_meta = {}
-    for trip_id, route_id, direction_id, dest_stop_id, dest_stop_name, final_seq in static_conn.execute(
-        "SELECT trip_id, route_id, direction_id, destination_stop_id, destination_stop_name, final_stop_sequence FROM trip_meta"
+    for (trip_id, route_id, direction_id, trip_number, dest_stop_id, dest_stop_name,
+         final_seq, distance_km, sommarticket_valid) in static_conn.execute(
+        """SELECT trip_id, route_id, direction_id, trip_number, destination_stop_id,
+                  destination_stop_name, final_stop_sequence, distance_km, sommarticket_valid
+           FROM trip_meta"""
     ):
         trip_meta[trip_id] = {
             "route_id": route_id,
             "route_short_name": routes.get(route_id, route_id),
             "vehicle_type": config.route_type_label(route_types.get(route_id)),
+            "trip_number": trip_number or None,
             "direction_id": direction_id,
             "destination_stop_name": dest_stop_name,
             "final_stop_sequence": final_seq,
+            "distance_km": distance_km,
+            "sommarticket_valid": bool(sommarticket_valid) if sommarticket_valid is not None else None,
         }
     return trip_meta, stops
 
@@ -79,6 +85,9 @@ def process_trip_updates(feed, trip_meta, stops, cur, now):
         route_id = meta.get("route_id") or tu.trip.route_id
         route_short_name = meta.get("route_short_name") or tu.trip.route_id or "unknown"
         vehicle_type = meta.get("vehicle_type", "UNKNOWN")
+        trip_number = meta.get("trip_number")
+        distance_km = meta.get("distance_km")
+        sommarticket_valid = meta.get("sommarticket_valid")
         destination_stop_name = meta.get("destination_stop_name", "")
         direction_id = meta.get("direction_id")
         final_seq = meta.get("final_stop_sequence")
@@ -91,6 +100,7 @@ def process_trip_updates(feed, trip_meta, stops, cur, now):
             cancellation_rows.append({
                 "trip_id": trip_id, "trip_start_date": start_date, "route_id": route_id,
                 "route_short_name": route_short_name, "vehicle_type": vehicle_type,
+                "trip_number": trip_number, "distance_km": distance_km, "sommarticket_valid": sommarticket_valid,
                 "destination_stop_name": destination_stop_name,
             })
             continue
@@ -116,6 +126,9 @@ def process_trip_updates(feed, trip_meta, stops, cur, now):
                 "route_id": route_id,
                 "route_short_name": route_short_name,
                 "vehicle_type": vehicle_type,
+                "trip_number": trip_number,
+                "distance_km": distance_km,
+                "sommarticket_valid": sommarticket_valid,
                 "direction_id": direction_id,
                 "destination_stop_name": destination_stop_name,
                 "stop_id": stu.stop_id,

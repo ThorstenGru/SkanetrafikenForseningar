@@ -15,7 +15,8 @@ import psycopg2.extras
 import config
 
 DELAY_COLUMNS = [
-    "trip_id", "trip_start_date", "route_id", "route_short_name", "vehicle_type", "direction_id",
+    "trip_id", "trip_start_date", "route_id", "route_short_name", "vehicle_type",
+    "trip_number", "distance_km", "sommarticket_valid", "direction_id",
     "destination_stop_name", "stop_id", "stop_name", "stop_sequence", "is_final_stop",
     "stop_schedule_relationship", "trip_schedule_relationship",
     "arrival_delay_sec", "departure_delay_sec", "arrival_time", "departure_time",
@@ -62,11 +63,16 @@ def upsert_delays_batch(cur, rows, now):
 def upsert_cancellations_batch(cur, rows, now):
     if not rows:
         return 0
-    values = [(r["trip_id"], r["trip_start_date"], r["route_id"], r["route_short_name"], r["vehicle_type"], r["destination_stop_name"], now, now) for r in rows]
+    values = [
+        (r["trip_id"], r["trip_start_date"], r["route_id"], r["route_short_name"], r["vehicle_type"],
+         r["trip_number"], r["distance_km"], r["sommarticket_valid"], r["destination_stop_name"], now, now)
+        for r in rows
+    ]
     results = psycopg2.extras.execute_values(
         cur,
         """INSERT INTO trip_cancellations
-           (trip_id, trip_start_date, route_id, route_short_name, vehicle_type, destination_stop_name, first_seen_at, last_seen_at)
+           (trip_id, trip_start_date, route_id, route_short_name, vehicle_type, trip_number,
+            distance_km, sommarticket_valid, destination_stop_name, first_seen_at, last_seen_at)
            VALUES %s
            ON CONFLICT (trip_id, trip_start_date) DO UPDATE SET
                last_seen_at = EXCLUDED.last_seen_at,

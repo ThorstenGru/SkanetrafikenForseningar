@@ -92,12 +92,14 @@ individual delay) lives in a separate, non-public Postgres database.
 ## Known limitations / future ideas
 
 - No weather data correlated yet (would strengthen pattern analysis).
-- No vehicle ID (would require `VehiclePositions.pb`, not implemented).
-- No filtering by "my lines/stops" yet — the dashboard shows the whole
-  network. A tailored basis for an actual compensation claim to
-  Skånetrafiken (only your own trips) is a planned next step — currently
-  paused pending a decision on how to model a rider's "journey" (which may
-  span multiple legs/transfers) vs. a single vehicle trip in our data model.
+- No individual vehicle ID (would require `VehiclePositions.pb`, not implemented).
+- The dashboard covers the whole network scoped to Sommarbiljett validity,
+  not "my specific commute" — every row is a standalone trip, not a
+  personally-defined multi-leg journey. See
+  [docs/COMPENSATION_RULES.md](docs/COMPENSATION_RULES.md) for the reasoning.
+- No actual compensation-amount calculation (SEK) yet — the underlying data
+  (final-stop delay, max delay, distance, vehicle type) is all in place,
+  the calculation itself just isn't wired up.
 - Polling happens every 2 hours — short delays that occur and resolve
   within that window can be missed or underestimated. The quota (30,000
   requests/30 days) allows much more frequent polling if that becomes
