@@ -3,3 +3,4 @@ __pycache__/
 .gtfs_static_raw/
 .env
 /dashboard.html
+/pages_site/

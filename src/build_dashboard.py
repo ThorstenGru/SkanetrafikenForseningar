@@ -129,6 +129,10 @@ def main():
     payload = json.dumps(rows, ensure_ascii=False, separators=(",", ":")).replace("</script", "<\\/script")
     html = template.replace("__DATA_JSON__", payload)
 
+    out_dir = os.path.dirname(args.out)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+
     with open(args.out, "w", encoding="utf-8") as f:
         f.write(html)
 
