@@ -27,8 +27,6 @@ import argparse
 import sqlite3
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
-
 import psycopg2.extras
 
 import config
@@ -143,7 +141,7 @@ def main():
     if args.date:
         target_date = date(int(args.date[0:4]), int(args.date[4:6]), int(args.date[6:8]))
     else:
-        target_date = (datetime.now(ZoneInfo("Europe/Stockholm")) - timedelta(days=1)).date()
+        target_date = (datetime.now(config.LOCAL_TZ) - timedelta(days=1)).date()
 
     static_conn = sqlite3.connect(config.STATIC_INDEX_PATH)
     scheduled = scheduled_trips_for(static_conn, target_date)
@@ -160,7 +158,7 @@ def main():
     # itself existed — that would just show 0%, not a real drop.
     cur.execute("SELECT MIN(run_at) FROM scan_runs")
     first_scan = cur.fetchone()[0]
-    if first_scan is None or target_date < first_scan.astimezone(ZoneInfo("Europe/Stockholm")).date():
+    if first_scan is None or target_date < first_scan.astimezone(config.LOCAL_TZ).date():
         print("Skipping %s: before the scanner's first run (%s), not a real coverage signal." % (
             target_date, first_scan.date() if first_scan else "unknown"))
         cur.close()

@@ -37,7 +37,7 @@ DEFAULT_DETAIL_DAYS = 3
 def fmt_time(dt):
     if dt is None:
         return None
-    return dt.astimezone().strftime("%H:%M")
+    return dt.astimezone(config.LOCAL_TZ).strftime("%H:%M")
 
 
 def build_alert_lookups(cur):

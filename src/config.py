@@ -1,6 +1,16 @@
 """Configuration and constants for the Skånetrafiken delay scanner."""
 
 import os
+from zoneinfo import ZoneInfo
+
+# Always use this explicitly for any human-facing time display — never bare
+# dt.astimezone() with no argument. That converts to whatever timezone the
+# MACHINE RUNNING THE CODE happens to be set to, which is fine on a
+# developer's own PC but silently wrong in GitHub Actions (UTC runners):
+# it displayed every stop time 2 hours early in summer (CEST = UTC+2).
+# Found 2026-07-06 by comparing the live dashboard against the real
+# Skånetrafiken app for the same trip.
+LOCAL_TZ = ZoneInfo("Europe/Stockholm")
 
 OPERATOR = "skane"
 

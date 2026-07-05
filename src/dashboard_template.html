@@ -556,7 +556,9 @@
   function fmtSeen(iso) {
     if (!iso) return '–';
     var d = new Date(iso);
-    return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    // Explicit Europe/Stockholm, not the viewer's own browser timezone —
+    // this is Swedish transit data regardless of who's looking at it.
+    return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Stockholm' });
   }
 
   var WEEKDAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -573,7 +575,7 @@
   document.getElementById('metaLine').textContent =
     trendTotal.toLocaleString('en-GB') + ' deviations over ' + trend.length + ' days (full history) · ' +
     data.length.toLocaleString('en-GB') + ' rows with full detail in this export · last poll ' +
-    (lastSeenMax ? fmtSeen(lastSeenMax) : '–') + ' · all times local time';
+    (lastSeenMax ? fmtSeen(lastSeenMax) : '–') + ' · all times Sweden local time (Europe/Stockholm)';
 
   // ---- History table: precomputed server-side SQL aggregate over the full
   // retention window (up to 45 days), independent of the bounded detail window.
