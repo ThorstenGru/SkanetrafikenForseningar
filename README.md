@@ -1,103 +1,106 @@
-# Skånetrafiken Förseningar
+# Skånetrafiken Delays
 
 **Copyright (c) 2026 Thorsten Grund. All rights reserved. USE AT YOUR OWN RISK.**
 
-Kontinuerlig scanner som samlar in förseningar, inställda turer och trafikstörningar
-för hela Skånetrafikens nät, via Trafiklabs öppna GTFS Regional-data. Körs automatiskt
-var 2:e timme via GitHub Actions och bygger upp en historik i `data/forseningar.db`
-(SQLite) — tänkt som underlag för kompensationsanspråk, klagomål till Skånetrafiken
-om återkommande problem, och egen statistik.
+Continuous scanner that collects delays, cancelled trips, and service alerts
+for the whole Skånetrafiken network, via Trafiklab's open GTFS Regional data.
+Runs automatically every 2 hours via GitHub Actions and builds up a history
+in Postgres (Supabase) — intended as evidence for compensation claims,
+complaints to Skånetrafiken about recurring problems, and personal stats.
 
-## Dokumentation
+**Live dashboard:** https://thorstengru.github.io/SkanetrafikenForseningar/
+(rebuilt automatically on every scan run).
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — flödet i detalj, designbeslut och varför.
-- [docs/DATA_DICTIONARY.md](docs/DATA_DICTIONARY.md) — alla tabeller och kolumner.
-- [docs/RUNBOOK.md](docs/RUNBOOK.md) — nyckelrotation, manuell scan, dashboard, felsökning.
+## Documentation
 
-## Snabbstart
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — the pipeline in detail, design decisions and why.
+- [docs/DATA_DICTIONARY.md](docs/DATA_DICTIONARY.md) — every table and column.
+- [docs/RUNBOOK.md](docs/RUNBOOK.md) — key rotation, manual scan, dashboard, troubleshooting.
+- [docs/COMPENSATION_RULES.md](docs/COMPENSATION_RULES.md) — Skånetrafiken's delay-compensation rules, travel terms, and Sommarbiljetten specifics (research, not yet wired into the scanner).
+
+## Quickstart
 
 ```bash
 git clone https://github.com/ThorstenGru/SkanetrafikenForseningar.git
 cd SkanetrafikenForseningar
 pip install -r requirements.txt
-export TRAFIKLAB_STATIC_KEY=...      # från developer.trafiklab.se
+export TRAFIKLAB_STATIC_KEY=...      # from developer.trafiklab.se
 export TRAFIKLAB_REALTIME_KEY=...
-python src/scan.py                   # kör en scan, skriver till data/forseningar.db
-python src/build_dashboard.py        # bygger dashboard.html för idag
+export DATABASE_URL=...              # Postgres connection (Supabase), see docs/RUNBOOK.md
+python src/scan.py                   # run one scan, writes to Postgres
+python src/build_dashboard.py        # build dashboard.html (history + recent days in detail)
 ```
 
-I produktion behövs inget av ovanstående lokalt — GitHub Actions kör `scan.py`
-automatiskt varannan timme och committar resultatet. Se
-[docs/RUNBOOK.md](docs/RUNBOOK.md) för hur du genererar en dashboard från den
-datan utan att röra API-nycklarna alls.
+In production none of the above is needed locally — GitHub Actions runs
+everything automatically (see below) and deploys the dashboard to GitHub
+Pages.
 
-## Arkitektur
+## Architecture at a glance
 
-1. **Statiskt index** (`data/static_index.sqlite`) — rutter, hållplatser och varje
-   turs destination (härledd ur sista hållplatsen i `stop_times.txt`). Byggs om en
-   gång i veckan (`STATIC_CACHE_MAX_AGE_DAYS` i `src/config.py`) för att skona den
-   knappa static-kvoten (60 anrop/30 dagar). Den råa GTFS-zippen (~300 MB uppackad)
-   laddas ner till `.gtfs_static_raw/` och raderas direkt efter — bara det destillerade
-   indexet committas.
-2. **Realtidsdata** hämtas varje körning:
-   - `TripUpdates.pb` — förseningar per hållplats + inställda turer.
-   - `ServiceAlerts.pb` — orsakskoder (cause/effect) och fritextbeskrivningar för
-     kända störningar (vägarbete, flyttade hållplatser, etc).
-3. Allt skrivs till `data/forseningar.db` med **deduplicering**: samma tur+datum+hållplats
-   uppdateras (inte dupliceras) vid varje ny poll, med `first_seen_at`/`last_seen_at`/
-   `poll_count` och den största observerade förseningen (`max_abs_delay_sec`), eftersom
-   en försenings-siffra kan ändras flera gånger under en resas gång.
+1. **Static index** (`data/static_index.sqlite`, committed to git) — routes,
+   stops, each trip's destination, and calendar rules (which days a trip
+   actually runs). Rebuilt about once a week to conserve the tight static
+   quota (60 requests/30 days).
+2. **Realtime data** is fetched every 2 hours (`TripUpdates.pb` +
+   `ServiceAlerts.pb`) and written batched to **Postgres** (Supabase, its
+   own dedicated project — see [docs/RUNBOOK.md](docs/RUNBOOK.md)), with
+   deduplication per (trip, date, stop order).
+3. **Coverage check** — once a day, compares which trips actually showed up
+   in the realtime feed against the timetable. ⚠️ Known limitation: only
+   ~5% of scheduled trips ever appear in Skånetrafiken's realtime feed at
+   all (most vehicles aren't live-tracked), so this can't simply diff
+   "scheduled" vs. "seen" — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+   for the per-line baseline approach this requires.
+4. **Housekeeping** — once a day, rows older than **45 days** are deleted
+   from every table.
+5. **Dashboard** is rebuilt on every scan and deployed to GitHub Pages — the
+   history trend covers the full 45-day window, the row log shows the most
+   recent days in full detail (or one specific day via `--date`).
 
-## Databasschema (`data/forseningar.db`)
+Full detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-- **delays** — en rad per (trip_id, trip_start_date, stop_id). Innehåller linje,
-  destination, hållplats, schemalagd tid *och* faktisk tid (beräknad som `time - delay`
-  från realtidsfeeden — ingen tung indexering av hela `stop_times.txt` krävs), försening
-  i sekunder, veckodag, och om det är sista hållplatsen på turen (`is_final_stop` — mest
-  relevant för kompensationsanspråk, där ankomsttiden på slutdestinationen brukar räknas).
-- **trip_cancellations** — hela turer med `schedule_relationship = CANCELED`.
-- **alerts** / **alert_entities** — kända störningar med orsak/effekt-koder och fritext,
-  kopplade till route_id/trip_id/stop_id där Skånetrafiken har angett det.
-- **scan_runs** — logg över varje körning (antal sedda/nya rader, ev. fel) för felsökning.
+⚠️ **Important limitation:** only a subset of delays will have a matched
+alert with a reason. Most "routine" delays have no registered reason in
+Trafiklab's feed — the `alerts` table is a best-effort match, not a
+guarantee.
 
-⚠️ **Viktig begränsning:** Bara en delmängd av förseningarna kommer ha en matchande
-alert med orsak. De flesta "vanliga" förseningar i trafiken saknar en registrerad
-orsak i Trafiklabs feed — `alerts`-tabellen är bäst-möjlig-koppling, inte facit.
+## Security
 
-## Körning lokalt
+API keys and the database connection are **never** hardcoded — they're read
+from environment variables (`TRAFIKLAB_STATIC_KEY`, `TRAFIKLAB_REALTIME_KEY`,
+`DATABASE_URL`), and from repo secrets in GitHub Actions.
 
-```bash
-pip install -r requirements.txt
-export TRAFIKLAB_STATIC_KEY=...
-export TRAFIKLAB_REALTIME_KEY=...
-python src/scan.py
-```
+⚠️ The Trafiklab keys used during this project's development were previously
+exposed in plaintext in a chat conversation and should be rotated on
+developer.trafiklab.se as soon as possible — see
+[docs/RUNBOOK.md](docs/RUNBOOK.md#rotate-the-api-keys).
 
-## Säkerhet
+The repo is **public** (required by GitHub Free to use Pages) — source code
+and the distilled static cache are visible to everyone. Raw data (every
+individual delay) lives in a separate, non-public Postgres database.
 
-API-nycklarna sätts **aldrig** i kod — de läses från miljövariabler
-(`TRAFIKLAB_STATIC_KEY`, `TRAFIKLAB_REALTIME_KEY`), och i GitHub Actions från
-repots secrets.
+## Tools in this repo
 
-⚠️ De nycklar som användes under utveckling av detta projekt har tidigare synts
-i klartext i en chattkonversation och bör roteras på developer.trafiklab.se
-så snart som möjligt — uppdatera sedan GitHub-secrets med `gh secret set`.
-
-## Verktyg i repot
-
-| Script | Syfte |
+| Script | Purpose |
 |---|---|
-| `src/scan.py` | Kör en scan (statisk uppdatering vid behov + realtidsdata → databas). Körs automatiskt av GitHub Actions. |
-| `src/build_dashboard.py` | Bygger en fristående HTML-dashboard (filter/sortering/orsak) för en given dag, helt från lokal data. |
-| `src/static_index.py` | Kan köras separat för att tvinga fram en omgång av det statiska indexet. |
+| `src/scan.py` | Runs a scan (refreshes the static index if needed + realtime data → Postgres). Runs automatically every 2 hours. |
+| `src/coverage_check.py` | Compares a finished day's timetable against what actually showed up in the feed. Runs automatically daily. |
+| `src/housekeeping.py` | Deletes data older than 45 days. Runs automatically daily. |
+| `src/build_dashboard.py` | Builds the standalone HTML dashboard. Runs automatically on every scan. |
+| `src/static_index.py` | Can be run standalone to force a static-index refresh. |
 
-## Kända begränsningar / framtida idéer
+## Known limitations / future ideas
 
-- Ingen väderdata korrelerad ännu (skulle stärka mönsteranalys).
-- Inget fordons-ID (kräver `VehiclePositions.pb`, ej implementerat).
-- Ingen filtrering på "mina linjer/hållplatser" ännu — dashboarden visar hela
-  nätet. Ett färdigt underlag riktat mot en specifik kompensationsanmälan till
-  Skånetrafiken (bara dina egna resor) är nästa naturliga steg ovanpå
-  `build_dashboard.py`.
-- `data/forseningar.db` växer obegränsat. Fungerar fint i git ett tag, men om den
-  blir stor (hundratals MB) kan det bli aktuellt att dela upp per månad/år.
+- No weather data correlated yet (would strengthen pattern analysis).
+- No vehicle ID (would require `VehiclePositions.pb`, not implemented).
+- No filtering by "my lines/stops" yet — the dashboard shows the whole
+  network. A tailored basis for an actual compensation claim to
+  Skånetrafiken (only your own trips) is a planned next step — currently
+  paused pending a decision on how to model a rider's "journey" (which may
+  span multiple legs/transfers) vs. a single vehicle trip in our data model.
+- Polling happens every 2 hours — short delays that occur and resolve
+  within that window can be missed or underestimated. The quota (30,000
+  requests/30 days) allows much more frequent polling if that becomes
+  worthwhile.
+- Only ~5% of scheduled trips ever appear in the realtime feed at all — see
+  the coverage-check caveat above.

@@ -42,13 +42,13 @@ def _is_index_fresh():
 def _download_and_extract_raw():
     os.makedirs(config.RAW_STATIC_CACHE_DIR, exist_ok=True)
     url = config.STATIC_URL_TMPL.format(op=config.OPERATOR, key=config.static_key())
-    print("Hamtar statisk GTFS-data for '%s' (forbrukar 1 static-request av manadskvoten)..." % config.OPERATOR)
+    print("Fetching static GTFS data for '%s' (uses 1 static request from the monthly quota)..." % config.OPERATOR)
     resp = requests.get(url, timeout=120)
     if resp.status_code != 200:
-        raise RuntimeError("Static GTFS-hamtning misslyckades: HTTP %d: %s" % (resp.status_code, resp.text[:300]))
+        raise RuntimeError("Static GTFS fetch failed: HTTP %d: %s" % (resp.status_code, resp.text[:300]))
     with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
         z.extractall(config.RAW_STATIC_CACHE_DIR)
-    print("Statisk GTFS uppackad i %s" % config.RAW_STATIC_CACHE_DIR)
+    print("Static GTFS extracted to %s" % config.RAW_STATIC_CACHE_DIR)
 
 
 def _build_trip_destinations(raw_dir):
@@ -82,6 +82,7 @@ def rebuild_index():
                 routes[row["route_id"]] = (
                     row.get("route_short_name") or row.get("route_long_name") or row["route_id"],
                     row.get("route_long_name", ""),
+                    int(row["route_type"]) if row.get("route_type") not in (None, "") else None,
                 )
 
         stops = {}
@@ -97,7 +98,7 @@ def rebuild_index():
             os.remove(config.STATIC_INDEX_PATH)
         conn = sqlite3.connect(config.STATIC_INDEX_PATH)
         conn.execute("CREATE TABLE meta (built_at REAL)")
-        conn.execute("CREATE TABLE routes (route_id TEXT PRIMARY KEY, short_name TEXT, long_name TEXT)")
+        conn.execute("CREATE TABLE routes (route_id TEXT PRIMARY KEY, short_name TEXT, long_name TEXT, route_type INTEGER)")
         conn.execute("CREATE TABLE stops (stop_id TEXT PRIMARY KEY, stop_name TEXT)")
         conn.execute(
             "CREATE TABLE trip_meta ("
@@ -113,7 +114,7 @@ def rebuild_index():
         conn.execute("CREATE TABLE calendar_dates (service_id TEXT, date TEXT, exception_type INTEGER)")
         conn.execute("CREATE INDEX idx_calendar_dates_svc ON calendar_dates (service_id, date)")
 
-        conn.executemany("INSERT INTO routes VALUES (?, ?, ?)", [(k, v[0], v[1]) for k, v in routes.items()])
+        conn.executemany("INSERT INTO routes VALUES (?, ?, ?, ?)", [(k, v[0], v[1], v[2]) for k, v in routes.items()])
         conn.executemany("INSERT INTO stops VALUES (?, ?)", list(stops.items()))
 
         with open(trips_path, "r", encoding="utf-8-sig", newline="") as f:
@@ -155,7 +156,7 @@ def rebuild_index():
         conn.execute("INSERT INTO meta VALUES (?)", (time.time(),))
         conn.commit()
         conn.close()
-        print("Statiskt index byggt: %d rutter, %d hallplatser, %d turer, %d calendar-rader, %d calendar_dates-rader." % (
+        print("Static index built: %d routes, %d stops, %d trips, %d calendar rows, %d calendar_dates rows." % (
             len(routes), len(stops), len(trip_rows), len(calendar_rows), len(calendar_dates_rows)))
         return True
     finally:
@@ -166,7 +167,7 @@ def rebuild_index():
 def ensure_index():
     """Rebuild the static index only if missing or older than the cache window."""
     if _is_index_fresh():
-        print("Statiskt index ar farskt (< %d dagar), anvander cache." % config.STATIC_CACHE_MAX_AGE_DAYS)
+        print("Static index is fresh (< %d days), using cache." % config.STATIC_CACHE_MAX_AGE_DAYS)
         return False
     return rebuild_index()
 

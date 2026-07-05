@@ -1,89 +1,148 @@
-# Datadictionary
+# Data Dictionary
 
-## `data/forseningar.db`
+## Postgres (Supabase) — see `src/schema.sql` for the authoritative DDL
 
 ### `delays`
 
-En rad per unik `(trip_id, trip_start_date, stop_id)`. Uppdateras (inte
-dupliceras) vid varje ny pollning av samma nyckel.
+One row per unique `(trip_id, trip_start_date, stop_sequence)`. Updated (not
+duplicated) on every new poll of the same key.
 
-| Kolumn | Typ | Beskrivning |
+| Column | Type | Description |
 |---|---|---|
-| `trip_id` | TEXT | Trafiklabs interna tur-ID (stabilt per schemalagt turmönster). |
-| `trip_start_date` | TEXT | `YYYYMMDD`, från GTFS-RT `trip.start_date`. Krävs för att skilja samma tur olika dagar. |
-| `route_id` | TEXT | Rutt-ID från static-datan. |
-| `route_short_name` | TEXT | Linjenummer, t.ex. `"817"`. |
-| `direction_id` | INTEGER | 0/1, GTFS-riktning. |
-| `destination_stop_name` | TEXT | Turens slutdestination, härledd ur sista hållplatsen i `stop_times.txt`. |
-| `stop_id` | TEXT | Hållplats-ID för den här raden. |
-| `stop_name` | TEXT | Läsbart hållplatsnamn. |
-| `stop_sequence` | INTEGER | Hållplatsens ordningsnummer i turen. |
-| `is_final_stop` | INTEGER (0/1) | 1 om detta är turens sista hållplats — mest relevant för kompensationsanspråk. |
-| `stop_schedule_relationship` | TEXT | `SCHEDULED` / `SKIPPED` / `NO_DATA` / `UNSCHEDULED` för just denna hållplats. |
-| `trip_schedule_relationship` | TEXT | `SCHEDULED` / `ADDED` / `CANCELED` / etc för hela turen. |
-| `arrival_delay_sec` / `departure_delay_sec` | INTEGER | Försening i sekunder (negativt = före tiden). |
-| `arrival_time_epoch` / `departure_time_epoch` | INTEGER | Faktisk tid, unix-epoch (UTC). |
-| `scheduled_arrival_epoch` / `scheduled_departure_epoch` | INTEGER | Beräknad som `time - delay`. |
-| `max_abs_delay_sec` | INTEGER | Största observerade absoluta försening över alla pollningar av denna rad. |
-| `weekday` | INTEGER | 0=måndag .. 6=söndag, från `trip_start_date`. |
-| `first_seen_at` / `last_seen_at` | TEXT (ISO 8601, UTC) | När raden först respektive senast sågs i feeden. |
-| `poll_count` | INTEGER | Antal gånger denna rad har uppdaterats. |
+| `trip_id` | TEXT | Trafiklab's internal trip ID (stable per scheduled trip pattern). |
+| `trip_start_date` | DATE | From GTFS-RT `trip.start_date`. Needed to distinguish the same trip on different days. |
+| `route_id` | TEXT | Route ID from the static data. |
+| `route_short_name` | TEXT | Line number, e.g. `"817"`. |
+| `vehicle_type` | TEXT | `BUS` / `RAIL` / `TRAM` / `FERRY` / `METRO` / `DEMAND_RESPONSIVE_BUS` (Närtrafik) / `UNKNOWN`. Derived from GTFS `route_type` (Skånetrafiken uses extended hierarchical vehicle-type codes: 100=rail, 700=bus, 900=tram, 1000=ferry, 1501=demand-responsive — see `config.ROUTE_TYPE_LABELS`). |
+| `direction_id` | SMALLINT | 0/1, GTFS direction. |
+| `destination_stop_name` | TEXT | The trip's final destination, derived from the last stop in `stop_times.txt`. |
+| `stop_id` | TEXT | Stop ID for this row. |
+| `stop_name` | TEXT | Human-readable stop name. |
+| `stop_sequence` | INTEGER | The stop's ordinal position in the trip. **Part of the primary key**, not `stop_id` — a circular/loop route can revisit the same physical stop twice in one trip. |
+| `is_final_stop` | BOOLEAN | True if this is the trip's last stop — most relevant for compensation claims. |
+| `stop_schedule_relationship` | TEXT | `SCHEDULED` / `SKIPPED` / `NO_DATA` / `UNSCHEDULED` for this specific stop. |
+| `trip_schedule_relationship` | TEXT | `SCHEDULED` / `ADDED` / `CANCELED` / etc for the whole trip. |
+| `arrival_delay_sec` / `departure_delay_sec` | INTEGER | Delay in seconds (negative = early). |
+| `arrival_time` / `departure_time` | TIMESTAMPTZ | Actual time. |
+| `scheduled_arrival` / `scheduled_departure` | TIMESTAMPTZ | Computed as `time - delay`. |
+| `max_abs_delay_sec` | INTEGER | Largest observed absolute delay across all polls of this row. |
+| `first_seen_at` / `last_seen_at` | TIMESTAMPTZ | When this row was first/last seen in the feed. |
+| `poll_count` | INTEGER | Number of times this row has been updated. |
 
 ### `trip_cancellations`
 
-En rad per `(trip_id, trip_start_date)` där hela turen har
-`schedule_relationship = CANCELED` (till skillnad från `delays`, där enskilda
-hållplatser kan vara `SKIPPED` medan turen i övrigt går).
+One row per `(trip_id, trip_start_date)` where the whole trip has
+`schedule_relationship = CANCELED` (as opposed to `delays`, where individual
+stops can be `SKIPPED` while the trip otherwise runs).
 
-| Kolumn | Beskrivning |
+| Column | Description |
 |---|---|
-| `trip_id`, `trip_start_date` | Se ovan. |
-| `route_id`, `route_short_name`, `destination_stop_name` | Se ovan. |
-| `first_seen_at`, `last_seen_at`, `poll_count` | Se ovan. |
+| `trip_id`, `trip_start_date` | See above. |
+| `route_id`, `route_short_name`, `vehicle_type`, `destination_stop_name` | See above. |
+| `first_seen_at`, `last_seen_at`, `poll_count` | See above. |
+
+### `seen_trips`
+
+One row per `(trip_id, trip_start_date)` for **every** trip observed in a
+poll, regardless of delay status — the presence log that
+`coverage_check.py` uses (see [ARCHITECTURE.md](ARCHITECTURE.md) for why a
+naive diff against the full schedule doesn't work).
+
+| Column | Description |
+|---|---|
+| `trip_id`, `trip_start_date`, `route_short_name` | See above. |
+| `first_seen_at`, `last_seen_at`, `poll_count` | See above. |
+
+### `line_daily_visibility`
+
+Populated by `coverage_check.py` for every fully-completed day: for each
+line, what fraction of its scheduled trips appeared (with any status) in
+the realtime feed that day. This is the raw data the baseline/anomaly
+detection is computed from — see [ARCHITECTURE.md](ARCHITECTURE.md).
+
+| Column | Description |
+|---|---|
+| `trip_start_date`, `route_short_name` | See above. |
+| `scheduled_count` | Trips scheduled for this line that day. |
+| `seen_count` | How many of those appeared in `seen_trips`. |
+| `visibility_rate` | `seen_count / scheduled_count`. |
+| `computed_at` | TIMESTAMPTZ. |
+
+### `line_visibility_anomalies`
+
+A line-day is inserted here only when its `visibility_rate` drops well
+below *that line's own* rolling baseline (not below 100% of schedule).
+Requires at least `MIN_BASELINE_DAYS` (7) of prior history for a line
+before it can be evaluated at all — stays empty for the first couple of
+weeks after launch, which is correct, not a bug.
+
+| Column | Description |
+|---|---|
+| `trip_start_date`, `route_short_name` | See above. |
+| `scheduled_count`, `seen_count` | That day's counts. |
+| `actual_rate` | That day's visibility rate. |
+| `baseline_rate` | The line's average rate over the prior rolling window. |
+| `baseline_days` | How many prior days contributed to the baseline. |
+| `detected_at` | TIMESTAMPTZ. |
 
 ### `alerts`
 
-En rad per unik `alert_uid` (GTFS-RT entity-ID från `ServiceAlerts.pb`).
+One row per unique `alert_uid` (GTFS-RT entity ID from `ServiceAlerts.pb`).
 
-| Kolumn | Beskrivning |
+| Column | Description |
 |---|---|
-| `alert_uid` | Feedens entity-ID, primärnyckel. |
-| `cause_code` / `cause_label` | GTFS-RT `Alert.Cause`-enum (t.ex. `CONSTRUCTION`, `OTHER_CAUSE`). Ofta `OTHER_CAUSE` — den riktiga orsaken finns i fritexten. |
-| `effect_code` / `effect_label` | GTFS-RT `Alert.Effect`-enum. |
-| `header_text` / `description_text` | Svensk fritext från Skånetrafiken. |
-| `active_period_start_epoch` / `active_period_end_epoch` | Giltighetsperiod, unix-epoch (kan vara `NULL` = tillsvidare). |
-| `first_seen_at` / `last_seen_at` | Se ovan. |
+| `alert_uid` | The feed's entity ID, primary key. |
+| `cause_code` / `cause_label` | GTFS-RT `Alert.Cause` enum (e.g. `CONSTRUCTION`, `OTHER_CAUSE`). Often `OTHER_CAUSE` — the real reason is in the free text. |
+| `effect_code` / `effect_label` | GTFS-RT `Alert.Effect` enum. |
+| `header_text` / `description_text` | Swedish free text from Skånetrafiken. |
+| `active_period_start` / `active_period_end` | TIMESTAMPTZ validity period (can be `NULL` = until further notice). |
+| `first_seen_at` / `last_seen_at` | See above. |
 
 ### `alert_entities`
 
-Kopplingstabell: en alert kan gälla flera rutter/turer/hållplatser samtidigt.
+Join table: an alert can apply to several routes/trips/stops at once.
 
-| Kolumn | Beskrivning |
+| Column | Description |
 |---|---|
-| `alert_uid` | FK mot `alerts`. |
-| `route_id`, `trip_id`, `stop_id` | Vilken av dessa som är satt varierar — Skånetrafiken anger olika granularitet per alert. |
+| `alert_uid` | FK to `alerts`. |
+| `route_id`, `trip_id`, `stop_id` | Which of these is set varies — Skånetrafiken specifies different granularity per alert. |
 
 ### `scan_runs`
 
-Loggrad per körning, för felsökning och för att se historiken av lyckade/
-misslyckade körningar.
+One log row per run, for troubleshooting and to see the history of
+successful/failed runs.
 
-| Kolumn | Beskrivning |
+| Column | Description |
 |---|---|
-| `run_at` | ISO 8601-tidsstämpel för körningen. |
-| `delays_seen` / `delays_new` | Antal rader processade respektive nya denna körning. |
-| `cancellations_seen` | Antal heltursinställningar denna körning. |
-| `alerts_seen` / `alerts_new` | Se ovan, för alerts. |
-| `static_refreshed` | 1 om static-indexet byggdes om denna körning. |
-| `error` | Textbeskrivning av eventuellt fel (`NULL` om lyckad körning). |
+| `run_at` | TIMESTAMPTZ of the run. |
+| `delays_seen` / `delays_new` | Rows processed / new this run. |
+| `cancellations_seen` | Whole-trip cancellations this run. |
+| `alerts_seen` / `alerts_new` | Same, for alerts. |
+| `static_refreshed` | True if the static index was rebuilt this run. |
+| `error` | Error text if any (`NULL` on success). |
 
-## `data/static_index.sqlite`
+### `housekeeping_runs`
 
-Byggs om av `src/static_index.py`, max 1 gång/vecka.
+One log row per daily housekeeping run.
 
-| Tabell | Innehåll |
+| Column | Description |
 |---|---|
-| `meta` | En rad: `built_at` (unix-epoch för när indexet senast byggdes). |
-| `routes` | `route_id` → `short_name`, `long_name`. |
+| `run_at`, `cutoff_date` | When it ran and the retention cutoff used. |
+| `*_deleted` | Row counts deleted per table. |
+| `error` | Error text if any. |
+
+## `data/static_index.sqlite` (local file, committed to git)
+
+Rebuilt by `src/static_index.py`, at most once a week.
+
+| Table | Contents |
+|---|---|
+| `meta` | One row: `built_at` (unix epoch of the last rebuild). |
+| `routes` | `route_id` → `short_name`, `long_name`, `route_type` (raw GTFS code — see `config.ROUTE_TYPE_LABELS` for the bus/rail/tram/ferry mapping). |
 | `stops` | `stop_id` → `stop_name`. |
-| `trip_meta` | `trip_id` → `route_id`, `direction_id`, `destination_stop_id`, `destination_stop_name`, `final_stop_sequence`. |
+| `trip_meta` | `trip_id` → `route_id`, `direction_id`, `service_id`, `destination_stop_id`, `destination_stop_name`, `final_stop_sequence`. |
+| `calendar` | `service_id` → weekday flags (`monday`..`sunday`), `start_date`, `end_date`. |
+| `calendar_dates` | `service_id`, `date`, `exception_type` (1=added, 2=removed) — exceptions to the base calendar. |
+
+`calendar`/`calendar_dates` exist so `coverage_check.py` can determine which
+`trip_id`s were actually scheduled to run on a given date.

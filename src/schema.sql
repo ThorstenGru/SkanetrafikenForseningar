@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS delays (
     trip_start_date            DATE NOT NULL,
     route_id                   TEXT,
     route_short_name           TEXT,
+    vehicle_type                TEXT,
     direction_id                SMALLINT,
     destination_stop_name      TEXT,
     stop_id                     TEXT NOT NULL,
@@ -31,12 +32,14 @@ CREATE TABLE IF NOT EXISTS delays (
 );
 CREATE INDEX IF NOT EXISTS idx_delays_date ON delays (trip_start_date);
 CREATE INDEX IF NOT EXISTS idx_delays_route ON delays (route_short_name);
+CREATE INDEX IF NOT EXISTS idx_delays_vehicle_type ON delays (vehicle_type);
 
 CREATE TABLE IF NOT EXISTS trip_cancellations (
     trip_id             TEXT NOT NULL,
     trip_start_date     DATE NOT NULL,
     route_id            TEXT,
     route_short_name    TEXT,
+    vehicle_type         TEXT,
     destination_stop_name TEXT,
     first_seen_at        TIMESTAMPTZ NOT NULL,
     last_seen_at         TIMESTAMPTZ NOT NULL,
@@ -59,21 +62,38 @@ CREATE TABLE IF NOT EXISTS seen_trips (
 );
 CREATE INDEX IF NOT EXISTS idx_seen_trips_date ON seen_trips (trip_start_date);
 
--- Populated once daily by coverage_check.py for a fully-completed day:
--- trips that were scheduled per the static timetable but never appeared in
--- seen_trips at all — a real, otherwise-invisible gap in Skånetrafiken's own
--- realtime feed.
-CREATE TABLE IF NOT EXISTS missing_trips (
-    trip_id                TEXT NOT NULL,
-    trip_start_date        DATE NOT NULL,
-    route_id               TEXT,
-    route_short_name       TEXT,
-    destination_stop_name  TEXT,
-    scheduled_departure    TIMESTAMPTZ,
-    detected_at             TIMESTAMPTZ NOT NULL,
-    PRIMARY KEY (trip_id, trip_start_date)
+-- Populated once daily by coverage_check.py for a fully-completed day: for
+-- every line, what fraction of its scheduled trips actually appeared (with
+-- ANY status) in the realtime feed that day. Only ~5% of all scheduled
+-- trips ever appear in TripUpdates at all (empirically verified — most
+-- vehicles aren't live-tracked), so a per-line rate — not "scheduled minus
+-- seen" — is the only way to get a meaningful signal. See ARCHITECTURE.md.
+CREATE TABLE IF NOT EXISTS line_daily_visibility (
+    trip_start_date     DATE NOT NULL,
+    route_short_name    TEXT NOT NULL,
+    scheduled_count     INTEGER NOT NULL,
+    seen_count          INTEGER NOT NULL,
+    visibility_rate     REAL NOT NULL,
+    computed_at         TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (trip_start_date, route_short_name)
 );
-CREATE INDEX IF NOT EXISTS idx_missing_trips_date ON missing_trips (trip_start_date);
+CREATE INDEX IF NOT EXISTS idx_line_visibility_route ON line_daily_visibility (route_short_name);
+
+-- A line-day is flagged here only when its visibility rate drops well below
+-- THAT LINE'S OWN rolling baseline (not below 100% of schedule) — see
+-- coverage_check.py. Requires enough baseline history to exist first, so
+-- this stays empty until the project has run for a couple of weeks.
+CREATE TABLE IF NOT EXISTS line_visibility_anomalies (
+    trip_start_date     DATE NOT NULL,
+    route_short_name    TEXT NOT NULL,
+    scheduled_count     INTEGER,
+    seen_count          INTEGER,
+    actual_rate         REAL,
+    baseline_rate       REAL,
+    baseline_days       INTEGER,
+    detected_at         TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (trip_start_date, route_short_name)
+);
 
 CREATE TABLE IF NOT EXISTS alerts (
     alert_uid               TEXT PRIMARY KEY,
@@ -120,7 +140,7 @@ CREATE TABLE IF NOT EXISTS housekeeping_runs (
     delays_deleted      INTEGER,
     cancellations_deleted INTEGER,
     seen_trips_deleted  INTEGER,
-    missing_trips_deleted INTEGER,
+    line_visibility_deleted INTEGER,
     alerts_deleted      INTEGER,
     scan_runs_deleted   INTEGER,
     error               TEXT

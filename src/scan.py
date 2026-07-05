@@ -18,7 +18,8 @@ import static_index
 
 
 def load_trip_meta(static_conn):
-    routes = dict(static_conn.execute("SELECT route_id, short_name FROM routes").fetchall())
+    routes = dict((rid, short) for rid, short, _rt in static_conn.execute("SELECT route_id, short_name, route_type FROM routes"))
+    route_types = dict(static_conn.execute("SELECT route_id, route_type FROM routes").fetchall())
     stops = dict(static_conn.execute("SELECT stop_id, stop_name FROM stops").fetchall())
     trip_meta = {}
     for trip_id, route_id, direction_id, dest_stop_id, dest_stop_name, final_seq in static_conn.execute(
@@ -27,6 +28,7 @@ def load_trip_meta(static_conn):
         trip_meta[trip_id] = {
             "route_id": route_id,
             "route_short_name": routes.get(route_id, route_id),
+            "vehicle_type": config.route_type_label(route_types.get(route_id)),
             "direction_id": direction_id,
             "destination_stop_name": dest_stop_name,
             "final_stop_sequence": final_seq,
@@ -36,10 +38,10 @@ def load_trip_meta(static_conn):
 
 def fetch_feed(url_tmpl, key, label):
     url = url_tmpl.format(op=config.OPERATOR, key=key)
-    print("Hamtar %s..." % label)
+    print("Fetching %s..." % label)
     resp = requests.get(url, timeout=30)
     if resp.status_code != 200:
-        raise RuntimeError("%s misslyckades: HTTP %d: %s" % (label, resp.status_code, resp.text[:300]))
+        raise RuntimeError("%s failed: HTTP %d: %s" % (label, resp.status_code, resp.text[:300]))
     feed = gtfs_realtime_pb2.FeedMessage()
     feed.ParseFromString(resp.content)
     return feed
@@ -75,7 +77,8 @@ def process_trip_updates(feed, trip_meta, stops, cur, now):
 
         meta = trip_meta.get(trip_id, {})
         route_id = meta.get("route_id") or tu.trip.route_id
-        route_short_name = meta.get("route_short_name") or tu.trip.route_id or "okand"
+        route_short_name = meta.get("route_short_name") or tu.trip.route_id or "unknown"
+        vehicle_type = meta.get("vehicle_type", "UNKNOWN")
         destination_stop_name = meta.get("destination_stop_name", "")
         direction_id = meta.get("direction_id")
         final_seq = meta.get("final_stop_sequence")
@@ -87,7 +90,8 @@ def process_trip_updates(feed, trip_meta, stops, cur, now):
         if tu.trip.schedule_relationship == 3:  # CANCELED (whole trip)
             cancellation_rows.append({
                 "trip_id": trip_id, "trip_start_date": start_date, "route_id": route_id,
-                "route_short_name": route_short_name, "destination_stop_name": destination_stop_name,
+                "route_short_name": route_short_name, "vehicle_type": vehicle_type,
+                "destination_stop_name": destination_stop_name,
             })
             continue
 
@@ -111,6 +115,7 @@ def process_trip_updates(feed, trip_meta, stops, cur, now):
                 "trip_start_date": start_date,
                 "route_id": route_id,
                 "route_short_name": route_short_name,
+                "vehicle_type": vehicle_type,
                 "direction_id": direction_id,
                 "destination_stop_name": destination_stop_name,
                 "stop_id": stu.stop_id,
@@ -195,12 +200,12 @@ def main():
         alerts_seen, alerts_new = process_alerts(alerts_feed, cur, now)
 
         conn.commit()
-        print("Klart: %d forseningar sedda (%d nya), %d installda turer, %d alerts sedda (%d nya)." % (
+        print("Done: %d delays seen (%d new), %d cancelled trips, %d alerts seen (%d new)." % (
             delays_seen, delays_new, cancellations_seen, alerts_seen, alerts_new))
     except Exception as exc:
         conn.rollback()
         error = str(exc)
-        print("FEL under scan: %s" % error, file=sys.stderr)
+        print("ERROR during scan: %s" % error, file=sys.stderr)
     finally:
         db.record_scan_run(cur, {
             "run_at": now, "delays_seen": delays_seen, "delays_new": delays_new,

@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="sv">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Skånetrafiken – Förseningshistorik</title>
+<title>Skånetrafiken – Delay History</title>
 <style>
   :root {
     --bg: #0a0d11;
@@ -344,26 +344,26 @@
 <div class="wrap">
   <header class="top">
     <div class="eyebrow">Skånetrafiken · GTFS Regional / Trafiklab</div>
-    <h1>Förseningshistorik, hela nätet</h1>
-    <div class="meta-line" id="metaLine">laddar…</div>
+    <h1>Delay history, whole network</h1>
+    <div class="meta-line" id="metaLine">loading…</div>
   </header>
 
   <section>
     <div class="section-head">
-      <h2>Historik per dag</h2>
-      <span class="hint">Klicka en rad för att zooma in på den dagen</span>
+      <h2>History by day</h2>
+      <span class="hint">Click a row to zoom into that day</span>
     </div>
     <div class="table-scroll">
       <table id="historyTable">
         <thead>
           <tr>
-            <th class="sortable" data-key="date">Datum<span class="arrow"></span></th>
-            <th>Veckodag</th>
-            <th class="sortable" data-key="count">Avvikelser<span class="arrow"></span></th>
-            <th class="sortable" data-key="cancelled">Inställda/hoppade<span class="arrow"></span></th>
-            <th class="sortable" data-key="missingTrips">Aldrig sedda<span class="arrow"></span></th>
-            <th class="sortable" data-key="avgDelay">Snittförsening<span class="arrow"></span></th>
-            <th class="sortable" data-key="worst">Värst<span class="arrow"></span></th>
+            <th class="sortable" data-key="date">Date<span class="arrow"></span></th>
+            <th>Weekday</th>
+            <th class="sortable" data-key="count">Deviations<span class="arrow"></span></th>
+            <th class="sortable" data-key="cancelled">Cancelled/skipped<span class="arrow"></span></th>
+            <th class="sortable" data-key="lineAnomalies">Line anomalies<span class="arrow"></span></th>
+            <th class="sortable" data-key="avgDelay">Avg. delay<span class="arrow"></span></th>
+            <th class="sortable" data-key="worst">Worst<span class="arrow"></span></th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -372,7 +372,7 @@
   </section>
 
   <div class="controls">
-    <label for="dayFilter">Visar dag</label>
+    <label for="dayFilter">Showing day</label>
     <select id="dayFilter"></select>
     <span class="hint" id="dayHint"></span>
   </div>
@@ -382,19 +382,40 @@
 
   <section>
     <div class="section-head">
-      <h2>Per linje</h2>
-      <span class="hint">Sorterat efter antal avvikelser</span>
+      <h2>By line</h2>
+      <span class="hint">Sorted by number of deviations</span>
     </div>
     <div class="table-scroll">
       <table id="lineTable">
         <thead>
           <tr>
-            <th>Linje</th>
-            <th>Vanligaste destination</th>
-            <th>Avvikelser</th>
-            <th>Snittförsening</th>
-            <th>Värst</th>
-            <th>Inställda/hoppade</th>
+            <th>Line</th>
+            <th>Most common destination</th>
+            <th>Deviations</th>
+            <th>Avg. delay</th>
+            <th>Worst</th>
+            <th>Cancelled/skipped</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="anomaliesSection" style="display:none;">
+    <div class="section-head">
+      <h2>Line visibility anomalies</h2>
+      <span class="hint">Lines whose feed visibility today dropped well below their own normal rate — see docs/ARCHITECTURE.md</span>
+    </div>
+    <div class="table-scroll">
+      <table id="anomaliesTable">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Line</th>
+            <th>Seen today</th>
+            <th>Normal rate</th>
+            <th>Baseline (days)</th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -404,26 +425,30 @@
 
   <section>
     <div class="section-head">
-      <h2>Logg — alla registrerade avvikelser</h2>
+      <h2>Log — all recorded deviations</h2>
       <span class="hint" id="logCount"></span>
     </div>
 
     <div class="controls">
-      <label for="q">Sök</label>
-      <input type="text" id="q" placeholder="Linje, hållplats, destination, orsak…" />
+      <label for="q">Search</label>
+      <input type="text" id="q" placeholder="Line, stop, destination, reason…" />
 
       <label for="statusFilter">Status</label>
       <select id="statusFilter">
-        <option value="">Alla</option>
-        <option value="Forsenad">Försenad</option>
-        <option value="Hoppar over hallplats">Hoppar över hållplats</option>
-        <option value="Installd (nar inte slutstation)">Inställd (når inte slutstation)</option>
-        <option value="Installd tur">Inställd hel tur</option>
-        <option value="Aldrig sedd">Aldrig sedd i feeden</option>
-        <option value="Fore tiden">Före tiden</option>
+        <option value="">All</option>
+        <option value="DELAYED">Delayed</option>
+        <option value="SKIPPED_STOP">Skipped stop</option>
+        <option value="PARTIAL_CANCELLATION">Cancelled (doesn't reach destination)</option>
+        <option value="CANCELLED_TRIP">Cancelled (whole trip)</option>
+        <option value="EARLY">Early</option>
       </select>
 
-      <label for="pageSize">Rader/sida</label>
+      <label for="vehicleFilter">Vehicle</label>
+      <select id="vehicleFilter">
+        <option value="">All</option>
+      </select>
+
+      <label for="pageSize">Rows/page</label>
       <select id="pageSize">
         <option>25</option>
         <option selected>50</option>
@@ -436,15 +461,16 @@
       <table id="logTable">
         <thead>
           <tr>
-            <th class="sortable" data-key="line">Linje<span class="arrow"></span></th>
-            <th class="sortable" data-key="stop">Resa<span class="arrow"></span></th>
+            <th class="sortable" data-key="line">Line<span class="arrow"></span></th>
+            <th class="sortable" data-key="vehicleType">Vehicle<span class="arrow"></span></th>
+            <th class="sortable" data-key="stop">Trip<span class="arrow"></span></th>
             <th class="sortable" data-key="status">Status<span class="arrow"></span></th>
-            <th class="sortable" data-key="delayMin">Försening<span class="arrow"></span></th>
-            <th class="sortable" data-key="schedSort">Schemalagd<span class="arrow"></span></th>
-            <th class="sortable" data-key="actSort">Faktisk<span class="arrow"></span></th>
-            <th class="sortable" data-key="reason">Orsak (bäst möjliga koppling)<span class="arrow"></span></th>
-            <th class="sortable" data-key="lastSeen">Senast sedd<span class="arrow"></span></th>
-            <th class="sortable" data-key="polls">Pollningar<span class="arrow"></span></th>
+            <th class="sortable" data-key="delayMin">Delay<span class="arrow"></span></th>
+            <th class="sortable" data-key="schedSort">Scheduled<span class="arrow"></span></th>
+            <th class="sortable" data-key="actSort">Actual<span class="arrow"></span></th>
+            <th class="sortable" data-key="reason">Reason (best-effort match)<span class="arrow"></span></th>
+            <th class="sortable" data-key="lastSeen">Last seen<span class="arrow"></span></th>
+            <th class="sortable" data-key="polls">Polls<span class="arrow"></span></th>
           </tr>
         </thead>
         <tbody id="logBody"></tbody>
@@ -453,15 +479,15 @@
 
     <div class="pager">
       <span id="pageInfo"></span>
-      <button id="prevBtn">← Föreg.</button>
-      <button id="nextBtn">Nästa →</button>
+      <button id="prevBtn">← Prev</button>
+      <button id="nextBtn">Next →</button>
     </div>
   </section>
 
   <footer>
-    Källa: Trafiklab GTFS Regional (TripUpdates + ServiceAlerts), operatör <code>skane</code>.
-    "Orsak" är bäst-möjlig koppling mot en aktiv Service Alert (trip → hållplats → linje) —
-    de flesta rutinförseningar saknar en registrerad orsak i feeden.
+    Source: Trafiklab GTFS Regional (TripUpdates + ServiceAlerts), operator <code>skane</code>.
+    "Reason" is a best-effort match against an active Service Alert (trip → stop → line) —
+    most routine delays have no registered reason in the feed.
   </footer>
 </div>
 
@@ -469,28 +495,43 @@
 <script>
 (function () {
   var payload = JSON.parse(document.getElementById('raw-data').textContent);
-  var data = payload.rows;       // bounded window of raw detail rows (see --days/--date)
-  var trend = payload.trend;     // full-retention daily aggregate (cheap, always complete)
+  var data = payload.rows;                   // bounded window of raw detail rows (see --days/--date)
+  var trend = payload.trend;                 // full-retention daily aggregate (cheap, always complete)
+  var lineAnomalies = payload.lineAnomalies || [];  // empty until enough baseline history exists
+
+  if (lineAnomalies.length) {
+    document.getElementById('anomaliesSection').style.display = '';
+    document.querySelector('#anomaliesTable tbody').innerHTML = lineAnomalies.map(function (a) {
+      return (
+        '<tr>' +
+        '<td class="num">' + fmtDate(a.date) + '</td>' +
+        '<td><span class="line-badge">' + a.line + '</span></td>' +
+        '<td class="num">' + a.seen + ' / ' + a.scheduled + ' (' + a.actualRate + '%)</td>' +
+        '<td class="num">' + a.baselineRate + '%</td>' +
+        '<td class="num">' + a.baselineDays + '</td>' +
+        '</tr>'
+      );
+    }).join('');
+  }
   data.forEach(function (r) {
     r.schedSort = r.schedDep || r.schedArr || '';
     r.actSort = r.actDep || r.actArr || '';
   });
 
   function statusClass(status) {
-    if (status === 'Forsenad') return 'delayed';
-    if (status === 'Hoppar over hallplats' || status === 'Installd (nar inte slutstation)' || status === 'Installd tur' || status === 'Aldrig sedd') return 'skipped';
-    if (status === 'Fore tiden') return 'ok';
+    if (status === 'DELAYED') return 'delayed';
+    if (status === 'SKIPPED_STOP' || status === 'PARTIAL_CANCELLATION' || status === 'CANCELLED_TRIP') return 'skipped';
+    if (status === 'EARLY') return 'ok';
     return 'ok';
   }
   function statusLabel(status) {
     return ({
-      'Forsenad': 'Försenad',
-      'Hoppar over hallplats': 'Hoppar hållplats',
-      'Installd (nar inte slutstation)': 'Inställd (delvis)',
-      'Installd tur': 'Inställd (hel tur)',
-      'Fore tiden': 'Före tiden',
-      'Aldrig sedd': 'Aldrig sedd i feeden',
-      'OK/marginell': 'Marginell'
+      'DELAYED': 'Delayed',
+      'SKIPPED_STOP': 'Skipped stop',
+      'PARTIAL_CANCELLATION': 'Cancelled (partial)',
+      'CANCELLED_TRIP': 'Cancelled (whole trip)',
+      'EARLY': 'Early',
+      'ON_TIME': 'On time'
     })[status] || status;
   }
   function fmtTime(hhmm) { return hhmm || '–'; }
@@ -502,24 +543,24 @@
   function fmtSeen(iso) {
     if (!iso) return '–';
     var d = new Date(iso);
-    return d.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   }
 
-  var WEEKDAY_NAMES = ['mån', 'tis', 'ons', 'tors', 'fre', 'lör', 'sön'];
+  var WEEKDAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   function fmtDate(yyyymmdd) {
     if (!yyyymmdd) return '–';
     return yyyymmdd.slice(0, 4) + '-' + yyyymmdd.slice(4, 6) + '-' + yyyymmdd.slice(6, 8);
   }
   function isCancelledLike(r) {
-    return r.status === 'Installd tur' || r.status === 'Installd (nar inte slutstation)' || r.status === 'Hoppar over hallplats' || r.status === 'Aldrig sedd';
+    return r.status === 'CANCELLED_TRIP' || r.status === 'PARTIAL_CANCELLATION' || r.status === 'SKIPPED_STOP';
   }
 
   var lastSeenMax = data.reduce(function (acc, r) { return (r.lastSeen && r.lastSeen > acc) ? r.lastSeen : acc; }, '');
   var trendTotal = trend.reduce(function (acc, g) { return acc + g.count; }, 0);
   document.getElementById('metaLine').textContent =
-    trendTotal.toLocaleString('sv-SE') + ' avvikelser over ' + trend.length + ' dagar (fullständig historik) · ' +
-    data.length.toLocaleString('sv-SE') + ' rader med full detalj i denna export · senaste pollning ' +
-    (lastSeenMax ? fmtSeen(lastSeenMax) : '–') + ' · alla tider lokal tid';
+    trendTotal.toLocaleString('en-GB') + ' deviations over ' + trend.length + ' days (full history) · ' +
+    data.length.toLocaleString('en-GB') + ' rows with full detail in this export · last poll ' +
+    (lastSeenMax ? fmtSeen(lastSeenMax) : '–') + ' · all times local time';
 
   // ---- History table: precomputed server-side SQL aggregate over the full
   // retention window (up to 45 days), independent of the bounded detail window.
@@ -560,7 +601,7 @@
         '<td>' + wd + '</td>' +
         '<td class="num bar-cell"><span>' + g.count + '</span><span class="bar-track"><span class="bar-fill" style="width:' + pct + '%"></span></span></td>' +
         '<td class="num">' + (g.cancelled || '–') + '</td>' +
-        '<td class="num">' + (g.missingTrips || '–') + '</td>' +
+        '<td class="num">' + (g.lineAnomalies || '–') + '</td>' +
         '<td class="num">' + (g.avgDelay ? g.avgDelay.toFixed(1) + ' min' : '–') + '</td>' +
         '<td class="num">' + (g.worst ? g.worst.toFixed(1) + ' min' : '–') + '</td>' +
         '</tr>'
@@ -578,7 +619,7 @@
 
   // Populate day selector
   dayFilterEl.innerHTML =
-    '<option value="' + ALL + '">Alla dagar (' + dateRows.length + ')</option>' +
+    '<option value="' + ALL + '">All days (' + dateRows.length + ')</option>' +
     dateRows.map(function (g) { return '<option value="' + g.date + '">' + fmtDate(g.date) + '</option>'; }).join('');
   dayFilterEl.value = selectedDay;
   dayFilterEl.addEventListener('change', function () {
@@ -601,11 +642,11 @@
     }, null);
 
     var stats = [
-      { label: 'Registrerade avvikelser', value: scoped.length.toLocaleString('sv-SE'), sub: selectedDay === ALL ? 'alla dagar' : fmtDate(selectedDay), cls: '' },
-      { label: 'Distinkta linjer', value: lines.size, sub: 'påverkade', cls: '' },
-      { label: 'Inställda / hoppade', value: cancelledLike.toLocaleString('sv-SE'), sub: 'hållplatser & turer', cls: 'crit' },
-      { label: 'Snittförsening', value: avgDelay.toFixed(1) + ' min', sub: 'bland försenade', cls: '' },
-      { label: 'Värsta försening', value: worst ? fmtDelay(worst.delayMin) : '–', sub: worst ? ('linje ' + worst.line + ' → ' + worst.dest) : '', cls: 'crit' }
+      { label: 'Recorded deviations', value: scoped.length.toLocaleString('en-GB'), sub: selectedDay === ALL ? 'all days' : fmtDate(selectedDay), cls: '' },
+      { label: 'Distinct lines', value: lines.size, sub: 'affected', cls: '' },
+      { label: 'Cancelled / skipped', value: cancelledLike.toLocaleString('en-GB'), sub: 'stops & trips', cls: 'crit' },
+      { label: 'Avg. delay', value: avgDelay.toFixed(1) + ' min', sub: 'among delayed', cls: '' },
+      { label: 'Worst delay', value: worst ? fmtDelay(worst.delayMin) : '–', sub: worst ? ('line ' + worst.line + ' → ' + worst.dest) : '', cls: 'crit' }
     ];
     statsEl.innerHTML = stats.map(function (s) {
       return '<div class="stat' + (s.cls ? ' ' + s.cls : '') + '"><div class="label">' + s.label + '</div><div class="value">' + s.value + '</div><div class="sub">' + s.sub + '</div></div>';
@@ -640,10 +681,22 @@
   // ---- Detail log: filter, sort, paginate (scoped to selected day) ----
   var qEl = document.getElementById('q');
   var statusFilterEl = document.getElementById('statusFilter');
+  var vehicleFilterEl = document.getElementById('vehicleFilter');
   var pageSizeEl = document.getElementById('pageSize');
   var logBody = document.getElementById('logBody');
   var pageInfo = document.getElementById('pageInfo');
   var logCount = document.getElementById('logCount');
+
+  var VEHICLE_LABELS = {
+    BUS: 'Bus', RAIL: 'Train', TRAM: 'Tram', METRO: 'Metro', FERRY: 'Ferry',
+    DEMAND_RESPONSIVE_BUS: 'Demand-responsive (Närtrafik)', TAXI: 'Taxi',
+    CABLE_TRAM: 'Cable tram', AERIAL_LIFT: 'Aerial lift', FUNICULAR: 'Funicular',
+    TROLLEYBUS: 'Trolleybus', MONORAIL: 'Monorail', UNKNOWN: 'Unknown', OTHER: 'Other',
+  };
+  var vehicleTypesPresent = Array.from(new Set(data.map(function (r) { return r.vehicleType; }).filter(Boolean))).sort();
+  vehicleFilterEl.innerHTML = '<option value="">All</option>' + vehicleTypesPresent.map(function (vt) {
+    return '<option value="' + vt + '">' + (VEHICLE_LABELS[vt] || vt) + '</option>';
+  }).join('');
 
   var sortKey = 'delayMin';
   var sortDir = -1;
@@ -652,8 +705,10 @@
   function applyFilters(scoped) {
     var q = qEl.value.trim().toLowerCase();
     var statusVal = statusFilterEl.value;
+    var vehicleVal = vehicleFilterEl.value;
     var rows = scoped.filter(function (r) {
       if (statusVal && r.status !== statusVal) return false;
+      if (vehicleVal && r.vehicleType !== vehicleVal) return false;
       if (!q) return true;
       return [r.line, r.dest, r.stop, r.reason].some(function (f) {
         return f && String(f).toLowerCase().indexOf(q) !== -1;
@@ -678,15 +733,16 @@
     if (page < 0) page = 0;
     var slice = rows.slice(page * pageSize, page * pageSize + pageSize);
 
-    logCount.textContent = rows.length.toLocaleString('sv-SE') + ' rader (av ' + scoped.length.toLocaleString('sv-SE') + ' för vald dag)';
+    logCount.textContent = rows.length.toLocaleString('en-GB') + ' rows (of ' + scoped.length.toLocaleString('en-GB') + ' for the selected day)';
     logBody.innerHTML = slice.map(function (r) {
       var cls = statusClass(r.status);
       var reasonHtml = r.reason
         ? '<span class="reason" title="' + r.reason.replace(/"/g, '&quot;') + '">' + r.reason + '</span>'
-        : '<span class="reason none">okänd</span>';
+        : '<span class="reason none">unknown</span>';
       return (
         '<tr>' +
         '<td><span class="line-badge">' + (r.line || '–') + '</span></td>' +
+        '<td>' + (VEHICLE_LABELS[r.vehicleType] || r.vehicleType || '–') + '</td>' +
         '<td><span class="dest-stop">' + r.stop + '</span><span class="dest-arrow">→</span>' + r.dest + '</td>' +
         '<td><span class="chip ' + cls + '">' + statusLabel(r.status) + '</span></td>' +
         '<td class="num">' + fmtDelay(r.delayMin) + '</td>' +
@@ -711,13 +767,13 @@
 
   function fullRender() {
     var scoped = selectedDay === ALL ? data : data.filter(function (r) { return r.date === selectedDay; });
-    dayHintEl.textContent = scoped.length.toLocaleString('sv-SE') + ' rader denna vy';
+    dayHintEl.textContent = scoped.length.toLocaleString('en-GB') + ' rows in this view';
 
     if (selectedDay !== ALL && !detailDates.has(selectedDay) && scoped.length === 0) {
       outOfWindowEl.style.display = '';
       outOfWindowEl.textContent =
-        '⚠ Den här dagen ligger utanför detaljfönstret för den här exporten. Kör "python src/build_dashboard.py --date ' +
-        selectedDay + '" för att se fullständig radlogg för just den dagen.';
+        '⚠ This day is outside the detail window for this export. Run "python src/build_dashboard.py --date ' +
+        selectedDay + '" to see the full row log for that day.';
     } else {
       outOfWindowEl.style.display = 'none';
     }
@@ -729,6 +785,7 @@
 
   qEl.addEventListener('input', function () { page = 0; fullRender(); });
   statusFilterEl.addEventListener('change', function () { page = 0; fullRender(); });
+  vehicleFilterEl.addEventListener('change', function () { page = 0; fullRender(); });
   pageSizeEl.addEventListener('change', function () { page = 0; fullRender(); });
   document.getElementById('prevBtn').addEventListener('click', function () { page--; fullRender(); });
   document.getElementById('nextBtn').addEventListener('click', function () { page++; fullRender(); });

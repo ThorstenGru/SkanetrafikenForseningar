@@ -1,4 +1,4 @@
-"""Configuration and constants for the Skånetrafiken förseningsscanner."""
+"""Configuration and constants for the Skånetrafiken delay scanner."""
 
 import os
 
@@ -93,3 +93,22 @@ TRIP_SCHEDULE_RELATIONSHIP_LABELS = {
     5: "DUPLICATED",
     6: "DELETED",
 }
+
+# GTFS route_type. Skånetrafiken uses the "extended" hierarchical vehicle
+# type codes (100s/700s/900s/1000s/1500s), not just the basic 0-7 enum.
+# Confirmed present in their feed (2026-07-05): 100 (rail), 700 (bus),
+# 900 (tram), 1000 (ferry), 1501 (demand-responsive/Närtrafik).
+ROUTE_TYPE_LABELS = {
+    0: "TRAM", 1: "METRO", 2: "RAIL", 3: "BUS", 4: "FERRY",
+    5: "CABLE_TRAM", 6: "AERIAL_LIFT", 7: "FUNICULAR", 11: "TROLLEYBUS", 12: "MONORAIL",
+    100: "RAIL", 109: "RAIL", 400: "METRO",
+    700: "BUS", 701: "BUS", 702: "BUS", 704: "BUS", 715: "DEMAND_RESPONSIVE_BUS",
+    900: "TRAM", 1000: "FERRY",
+    1500: "TAXI", 1501: "DEMAND_RESPONSIVE_BUS",
+}
+
+
+def route_type_label(route_type):
+    if route_type is None:
+        return "UNKNOWN"
+    return ROUTE_TYPE_LABELS.get(route_type, "OTHER")

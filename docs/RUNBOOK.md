@@ -1,81 +1,92 @@
 # Runbook
 
-## Rotera API-nycklarna (gör detta snarast — se säkerhetsvarning i README)
+## Rotate the API keys (do this soon — see security warning in README)
 
-Nycklarna som används idag har synts i klartext i en tidigare chatt-session.
+The keys currently in use were exposed in plaintext in an earlier chat
+session.
 
-1. Logga in på https://developer.trafiklab.se
-2. Rotera/generera nya nycklar för **GTFS Regional Static** och
-   **GTFS Regional Realtime** (Bronze-tier räcker).
-3. Uppdatera GitHub-secrets:
+1. Log in at https://developer.trafiklab.se
+2. Rotate/generate new keys for **GTFS Regional Static** and
+   **GTFS Regional Realtime** (Bronze tier is enough).
+3. Update GitHub secrets:
    ```bash
-   gh secret set TRAFIKLAB_STATIC_KEY --body "NY_STATIC_NYCKEL" -R ThorstenGru/SkanetrafikenForseningar
-   gh secret set TRAFIKLAB_REALTIME_KEY --body "NY_REALTIME_NYCKEL" -R ThorstenGru/SkanetrafikenForseningar
+   gh secret set TRAFIKLAB_STATIC_KEY --body "NEW_STATIC_KEY" -R ThorstenGru/SkanetrafikenForseningar
+   gh secret set TRAFIKLAB_REALTIME_KEY --body "NEW_REALTIME_KEY" -R ThorstenGru/SkanetrafikenForseningar
    ```
-4. Kör en manuell scan för att verifiera att de nya nycklarna fungerar:
+4. Run a manual scan to verify the new keys work:
    ```bash
    gh workflow run scan.yml -R ThorstenGru/SkanetrafikenForseningar
    gh run list --workflow=scan.yml -R ThorstenGru/SkanetrafikenForseningar --limit 1
    ```
-5. Om du kör lokalt också: uppdatera dina lokala miljövariabler
+5. If you also run locally: update your local environment variables
    (`TRAFIKLAB_STATIC_KEY`, `TRAFIKLAB_REALTIME_KEY`).
 
-Glöm inte att även byta lösenordet för `ThorstenGrund@icloud.com`, som
-exponerades i samma tidigare konversation.
+Also remember to change the password for `ThorstenGrund@icloud.com`, which
+was exposed in the same earlier conversation.
 
-## Köra en manuell scan
+## Run a manual scan
 
-**Via GitHub Actions (rekommenderat, kräver inget lokalt uppsatt):**
+**Via GitHub Actions (recommended, nothing to set up locally):**
 ```bash
 gh workflow run scan.yml -R ThorstenGru/SkanetrafikenForseningar
 ```
 
-**Lokalt:**
+**Locally:**
 ```bash
 cd SkanetrafikenForseningar
 pip install -r requirements.txt
 export TRAFIKLAB_STATIC_KEY=...
 export TRAFIKLAB_REALTIME_KEY=...
+export DATABASE_URL=...   # Postgres connection string, see below
 python src/scan.py
 ```
 
-## Generera dashboard
+## Generate a dashboard
 
-Ingen nätåtkomst eller API-nyckel krävs — läser bara den lokala databasen.
-Synka först ner senaste datan med `git pull` om du inte redan har den.
-
-```bash
-python src/build_dashboard.py                # hela historiken, med dagväljare i UI:t
-python src/build_dashboard.py --date 20260705 # bara en dag (mindre fil när historiken vuxit sig stor)
-python src/build_dashboard.py --out annan_fil.html
-```
-
-Öppna den resulterande `dashboard.html` direkt i en webbläsare. Överst finns
-en "Historik per dag"-tabell — klicka en rad för att zooma in på den dagen,
-eller använd "Visar dag"-väljaren. Allt annat (statistik, per linje, loggen)
-filtreras efter vald dag.
-
-## Inspektera databasen direkt
+No network access or API key needed — reads only from Postgres.
 
 ```bash
-sqlite3 data/forseningar.db
-sqlite> SELECT route_short_name, COUNT(*) FROM delays WHERE trip_start_date = '20260705' GROUP BY 1 ORDER BY 2 DESC;
-sqlite> .schema delays
+export DATABASE_URL=...
+python src/build_dashboard.py                 # full history trend + last 3 days of detail
+python src/build_dashboard.py --days 7        # last 7 days of detail
+python src/build_dashboard.py --date 20260705 # exactly one day (smaller file once history has grown)
+python src/build_dashboard.py --out other_file.html
 ```
 
-## Felsökning
+Open the resulting `dashboard.html` directly in a browser. At the top is a
+"History by day" table — click a row to zoom into that day, or use the
+"Showing day" selector. Everything else (stats, per-line, the log) filters
+by the selected day.
 
-| Symptom | Trolig orsak | Åtgärd |
+## Inspect the database directly
+
+```bash
+psql "$DATABASE_URL"
+=> SELECT route_short_name, COUNT(*) FROM delays WHERE trip_start_date = '2026-07-05' GROUP BY 1 ORDER BY 2 DESC;
+=> \d delays
+```
+
+The static routes/stops/calendar cache is a local SQLite file:
+```bash
+sqlite3 data/static_index.sqlite
+sqlite> SELECT COUNT(*) FROM trip_meta;
+```
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
 |---|---|---|
-| GH Actions-jobbet failar på `Run scanner` med HTTP 403 | Nyckel ogiltig/roterad utan att secrets uppdaterats | Kör steg 3 ovan igen med rätt nyckel |
-| HTTP 429 eller kvotfel på static-hämtningen | Static-kvoten (60/30 dagar) förbrukad | Vänta, eller höj `STATIC_CACHE_MAX_AGE_DAYS` i `src/config.py` |
-| Alla `route_short_name` visar `okand` | `trip_id`-matchning mot static-indexet missar | Static-indexet kan vara skadat/ur synk — radera `data/static_index.sqlite` och kör om (kostar 1 static-request) |
-| Workflow committar inget varannan timme trots att data borde ha ändrats | Normalt — `git diff --cached --quiet` hoppar över commit om inget faktiskt förändrats | Ingen åtgärd |
-| `data/forseningar.db` växer väldigt stort (100-tals MB) | Förväntat över lång tid | Överväg att dela upp per månad/år, se README → Framtida idéer |
+| GH Actions job fails on `Run scanner` with HTTP 403 | Key invalid/rotated without updating secrets | Redo step 3 above with the correct key |
+| HTTP 429 or quota error on the static fetch | Static quota (60/30 days) exhausted | Wait, or raise `STATIC_CACHE_MAX_AGE_DAYS` in `src/config.py` |
+| All `route_short_name` shows `okand` | `trip_id` lookup against the static index is missing | Static index may be stale/out of sync — delete `data/static_index.sqlite` and rerun (costs 1 static request) |
+| `ON CONFLICT DO UPDATE command cannot affect row a second time` | A batch contains two rows with the same primary key (e.g. malformed feed entities with an empty `trip_id`) | Already guarded in `scan.py` (skips empty `trip_id`, dedupes defensively before each batch) — if it recurs, inspect the feed for a new edge case |
+| Workflow commits nothing most runs even though scans succeeded | Normal — `data/static_index.sqlite` only changes ~weekly; delay data lives in Postgres, not git | No action needed |
+| `missing_trips` shows a huge number for a day the scanner wasn't running yet | The coverage check has a guard against checking dates before the scanner's first run, but only from the point that guard was added | Truncate `missing_trips` for that date range if it predates the guard |
 
-## Kontrollera körningshistorik
+## Check run history
 
 ```bash
 gh run list --workflow=scan.yml -R ThorstenGru/SkanetrafikenForseningar --limit 10
+gh run list --workflow=housekeeping.yml -R ThorstenGru/SkanetrafikenForseningar --limit 10
 gh run view <run-id> --log -R ThorstenGru/SkanetrafikenForseningar
 ```

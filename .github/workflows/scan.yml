@@ -1,4 +1,4 @@
-name: Scan Skånetrafiken förseningar
+name: Scan Skånetrafiken delays
 
 on:
   schedule:

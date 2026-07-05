@@ -4,7 +4,7 @@ stops cache) is read locally, and even that isn't needed here since delays
 rows already carry denormalized route/stop names written at scan time.
 
 Two different windows, for two different jobs:
-  - The "Historik per dag" table is a cheap SQL aggregate (COUNT/AVG/MAX
+  - The "history per day" table is a cheap SQL aggregate (COUNT/AVG/MAX
     GROUP BY day) over the FULL retention window (up to 45 days) — trend
     view, stays small regardless of history length.
   - The detailed row-level log defaults to the last few days only (--days),
@@ -66,12 +66,12 @@ def best_reason(lookups, trip_id, route_id, stop_id):
 
 def classify(delay_sec, stop_schedule_relationship, is_final_stop):
     if stop_schedule_relationship == "SKIPPED":
-        return "Hoppar over hallplats" if not is_final_stop else "Installd (nar inte slutstation)"
+        return "SKIPPED_STOP" if not is_final_stop else "PARTIAL_CANCELLATION"
     if delay_sec and delay_sec > 60:
-        return "Forsenad"
+        return "DELAYED"
     if delay_sec and delay_sec < -60:
-        return "Fore tiden"
-    return "OK/marginell"
+        return "EARLY"
+    return "ON_TIME"
 
 
 def fetch_history_trend(cur):
@@ -105,9 +105,27 @@ def fetch_history_trend(cur):
     return out
 
 
-def fetch_missing_trips_by_day(cur):
-    cur.execute("SELECT trip_start_date, COUNT(*) FROM missing_trips GROUP BY trip_start_date")
+def fetch_line_anomalies_by_day(cur):
+    """Count of lines flagged below their own visibility baseline, per day.
+    Will be empty for weeks after launch — needs MIN_BASELINE_DAYS of history
+    first (see coverage_check.py). That's correct, not a bug."""
+    cur.execute("SELECT trip_start_date, COUNT(*) FROM line_visibility_anomalies GROUP BY trip_start_date")
     return {d.strftime("%Y%m%d"): c for d, c in cur.fetchall()}
+
+
+def fetch_recent_line_anomalies(cur, limit=50):
+    cur.execute(
+        """SELECT trip_start_date, route_short_name, scheduled_count, seen_count, actual_rate, baseline_rate, baseline_days
+           FROM line_visibility_anomalies ORDER BY trip_start_date DESC, route_short_name LIMIT %s""",
+        (limit,),
+    )
+    return [
+        {
+            "date": d.strftime("%Y%m%d"), "line": route, "scheduled": sched, "seen": seen_n,
+            "actualRate": round(actual * 100, 1), "baselineRate": round(baseline * 100, 1), "baselineDays": days,
+        }
+        for d, route, sched, seen_n, actual, baseline, days in cur.fetchall()
+    ]
 
 
 def fetch_detail_rows(cur, start_date, end_date, single_date):
@@ -120,19 +138,20 @@ def fetch_detail_rows(cur, start_date, end_date, single_date):
         where, params = "WHERE trip_start_date BETWEEN %s AND %s", (start_date, end_date)
 
     cur.execute(
-        """SELECT trip_id, trip_start_date, route_id, route_short_name, destination_stop_name,
+        """SELECT trip_id, trip_start_date, route_id, route_short_name, vehicle_type, destination_stop_name,
                   stop_id, stop_name, stop_sequence, is_final_stop, stop_schedule_relationship,
                   arrival_delay_sec, departure_delay_sec, arrival_time, departure_time,
                   scheduled_arrival, scheduled_departure, first_seen_at, last_seen_at, poll_count
            FROM delays %s""" % where,
         params,
     )
-    for (trip_id, d, route_id, route_short_name, dest, stop_id, stop_name, seq, is_final,
+    for (trip_id, d, route_id, route_short_name, vehicle_type, dest, stop_id, stop_name, seq, is_final,
          stop_rel, arr_delay, dep_delay, arr_time, dep_time, sched_arr, sched_dep,
          first_seen, last_seen, polls) in cur.fetchall():
         delay_sec = dep_delay if dep_delay not in (None, 0) else arr_delay
         out.append({
-            "trip": trip_id, "date": d.strftime("%Y%m%d"), "line": route_short_name, "dest": dest,
+            "trip": trip_id, "date": d.strftime("%Y%m%d"), "line": route_short_name,
+            "vehicleType": vehicle_type or "UNKNOWN", "dest": dest,
             "stop": stop_name, "seq": seq, "final": bool(is_final),
             "status": classify(delay_sec, stop_rel, is_final),
             "relationship": stop_rel,
@@ -144,34 +163,20 @@ def fetch_detail_rows(cur, start_date, end_date, single_date):
         })
 
     cur.execute(
-        """SELECT trip_id, trip_start_date, route_id, route_short_name, destination_stop_name,
+        """SELECT trip_id, trip_start_date, route_id, route_short_name, vehicle_type, destination_stop_name,
                   first_seen_at, last_seen_at, poll_count
            FROM trip_cancellations %s""" % where,
         params,
     )
-    for trip_id, d, route_id, route_short_name, dest, first_seen, last_seen, polls in cur.fetchall():
+    for trip_id, d, route_id, route_short_name, vehicle_type, dest, first_seen, last_seen, polls in cur.fetchall():
         out.append({
-            "trip": trip_id, "date": d.strftime("%Y%m%d"), "line": route_short_name, "dest": dest,
-            "stop": "(HELA TUREN)", "seq": None, "final": None, "status": "Installd tur",
+            "trip": trip_id, "date": d.strftime("%Y%m%d"), "line": route_short_name,
+            "vehicleType": vehicle_type or "UNKNOWN", "dest": dest,
+            "stop": "(WHOLE TRIP)", "seq": None, "final": None, "status": "CANCELLED_TRIP",
             "relationship": "CANCELED", "delayMin": None, "schedDep": None, "actDep": None,
             "schedArr": None, "actArr": None,
             "reason": best_reason(lookups, trip_id, route_id, None),
             "firstSeen": first_seen.isoformat(), "lastSeen": last_seen.isoformat(), "polls": polls,
-        })
-
-    cur.execute(
-        """SELECT trip_id, trip_start_date, route_id, route_short_name, destination_stop_name, detected_at
-           FROM missing_trips %s""" % where,
-        params,
-    )
-    for trip_id, d, route_id, route_short_name, dest, detected_at in cur.fetchall():
-        out.append({
-            "trip": trip_id, "date": d.strftime("%Y%m%d"), "line": route_short_name, "dest": dest or "",
-            "stop": "(ALDRIG SEDD I FEEDEN)", "seq": None, "final": None, "status": "Aldrig sedd",
-            "relationship": "MISSING", "delayMin": None, "schedDep": None, "actDep": None,
-            "schedArr": None, "actArr": None,
-            "reason": "Turen fanns i tidtabellen men syntes aldrig i TripUpdates-feeden den dagen.",
-            "firstSeen": detected_at.isoformat(), "lastSeen": detected_at.isoformat(), "polls": 0,
         })
 
     return out
@@ -196,10 +201,11 @@ def main():
     cur = conn.cursor()
     try:
         trend = fetch_history_trend(cur)
-        missing_by_day = fetch_missing_trips_by_day(cur)
+        anomalies_by_day = fetch_line_anomalies_by_day(cur)
         for row in trend:
-            row["missingTrips"] = missing_by_day.get(row["date"], 0)
+            row["lineAnomalies"] = anomalies_by_day.get(row["date"], 0)
         detail_rows = fetch_detail_rows(cur, start_date, end_date, single_date)
+        line_anomalies = fetch_recent_line_anomalies(cur)
     finally:
         cur.close()
         conn.close()
@@ -208,7 +214,8 @@ def main():
         template = f.read()
 
     payload = json.dumps(
-        {"trend": trend, "rows": detail_rows}, ensure_ascii=False, separators=(",", ":")
+        {"trend": trend, "rows": detail_rows, "lineAnomalies": line_anomalies},
+        ensure_ascii=False, separators=(",", ":"),
     ).replace("</script", "<\\/script")
     html = template.replace("__DATA_JSON__", payload)
 
@@ -219,7 +226,7 @@ def main():
         f.write(html)
 
     scope = single_date or ("%s .. %s" % (start_date, end_date))
-    print("Dashboard skriven till %s (%d detaljrader for %s, %d dagar i historiktrenden)" % (
+    print("Dashboard written to %s (%d detail rows for %s, %d days in history trend)" % (
         args.out, len(detail_rows), scope, len(trend)))
 
 
