@@ -1,0 +1,588 @@
+<title>Skånetrafiken – Dagens förseningar</title>
+<style>
+  :root {
+    --bg: #0a0d11;
+    --panel: #12161c;
+    --panel-alt: #171c23;
+    --border: #232a33;
+    --ink: #c9d1dc;
+    --ink-dim: #7c8797;
+    --ink-faint: #4d5560;
+    --amber: #f2a93b;
+    --amber-bright: #ffc061;
+    --red: #e2482d;
+    --red-dim: #4a2620;
+    --green: #4fae83;
+    --green-dim: #1c3129;
+    --display: "Bahnschrift SemiCondensed", "Bahnschrift", "Arial Narrow", "Segoe UI Semibold", sans-serif;
+    --body: "Segoe UI", system-ui, -apple-system, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--body);
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection { background: var(--amber); color: #1a1000; }
+
+  a { color: var(--amber); }
+
+  .wrap {
+    max-width: 1360px;
+    margin: 0 auto;
+    padding: 28px 24px 80px;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+
+  header.top {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 20px;
+  }
+
+  .eyebrow {
+    font-family: var(--display);
+    font-size: 12.5px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--amber);
+    font-weight: 600;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(28px, 4vw, 40px);
+    letter-spacing: 0.01em;
+    margin: 2px 0 4px;
+    color: #f2f4f7;
+    text-wrap: balance;
+  }
+
+  .meta-line {
+    color: var(--ink-dim);
+    font-size: 13.5px;
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Stat strip */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .stat {
+    background: var(--panel);
+    padding: 18px 18px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+  .stat .label {
+    font-family: var(--display);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    font-weight: 600;
+  }
+  .stat .value {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 30px;
+    font-weight: 600;
+    color: var(--amber-bright);
+    letter-spacing: -0.01em;
+  }
+  .stat .sub {
+    font-size: 12px;
+    color: var(--ink-faint);
+    font-family: var(--mono);
+  }
+  .stat.crit .value { color: var(--red); }
+  .stat.ok .value { color: var(--green); }
+
+  section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .section-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  h2 {
+    font-family: var(--display);
+    font-size: 13px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink);
+    font-weight: 700;
+    margin: 0;
+  }
+
+  .hint {
+    font-size: 12.5px;
+    color: var(--ink-faint);
+  }
+
+  .table-scroll {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--panel);
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.5px;
+  }
+
+  thead th {
+    position: sticky;
+    top: 0;
+    background: var(--panel-alt);
+    text-align: left;
+    font-family: var(--display);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-weight: 600;
+    color: var(--ink-dim);
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  #lineTable thead th { cursor: default; }
+
+  #logTable thead th.sortable {
+    cursor: pointer;
+    user-select: none;
+  }
+  #logTable thead th.sortable:hover { color: var(--amber); }
+  #logTable thead th .arrow { opacity: 0.5; margin-left: 3px; }
+
+  tbody td {
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+    color: var(--ink);
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: rgba(242, 169, 59, 0.05); }
+
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  .line-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 30px;
+    padding: 2px 7px;
+    border-radius: 3px;
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    font-family: var(--mono);
+    font-weight: 600;
+    font-size: 12.5px;
+    color: #f2f4f7;
+  }
+
+  .chip {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-family: var(--display);
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+  }
+  .chip.delayed { background: rgba(242, 169, 59, 0.15); color: var(--amber-bright); }
+  .chip.skipped, .chip.canceled { background: var(--red-dim); color: #ff8a72; }
+  .chip.ok { background: var(--green-dim); color: var(--green); }
+
+  .reason {
+    max-width: 360px;
+    color: var(--ink-dim);
+    font-size: 12.5px;
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .reason:hover { white-space: normal; overflow: visible; }
+  .reason.none { color: var(--ink-faint); font-style: italic; }
+
+  .dest-stop { color: var(--ink); }
+  .dest-arrow { color: var(--ink-faint); margin: 0 5px; }
+
+  /* Controls */
+  .controls {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  input[type="text"], select {
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 13px;
+    padding: 8px 10px;
+    border-radius: 3px;
+    outline: none;
+  }
+  input[type="text"] { min-width: 220px; }
+  input[type="text"]:focus, select:focus { border-color: var(--amber); }
+  input[type="text"]::placeholder { color: var(--ink-faint); }
+
+  select { cursor: pointer; }
+
+  .controls label {
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-faint);
+    font-family: var(--display);
+    margin-right: 4px;
+  }
+
+  .pager {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    justify-content: flex-end;
+    font-size: 12.5px;
+    color: var(--ink-dim);
+    font-family: var(--mono);
+  }
+  .pager button {
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    color: var(--ink);
+    font-family: var(--display);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 6px 12px;
+    border-radius: 3px;
+    cursor: pointer;
+  }
+  .pager button:hover:not(:disabled) { border-color: var(--amber); color: var(--amber); }
+  .pager button:disabled { opacity: 0.35; cursor: not-allowed; }
+
+  footer {
+    color: var(--ink-faint);
+    font-size: 12px;
+    border-top: 1px solid var(--border);
+    padding-top: 16px;
+  }
+
+  :focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+
+  @media (max-width: 900px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="eyebrow">Skånetrafiken · GTFS Regional / Trafiklab</div>
+    <h1>Dagens avvikelser, hela nätet</h1>
+    <div class="meta-line" id="metaLine">laddar…</div>
+  </header>
+
+  <section class="stats" id="statStrip"></section>
+
+  <section>
+    <div class="section-head">
+      <h2>Per linje</h2>
+      <span class="hint">Sorterat efter antal avvikelser</span>
+    </div>
+    <div class="table-scroll">
+      <table id="lineTable">
+        <thead>
+          <tr>
+            <th>Linje</th>
+            <th>Vanligaste destination</th>
+            <th>Avvikelser</th>
+            <th>Snittförsening</th>
+            <th>Värst</th>
+            <th>Inställda/hoppade</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Logg — alla registrerade avvikelser idag</h2>
+      <span class="hint" id="logCount"></span>
+    </div>
+
+    <div class="controls">
+      <label for="q">Sök</label>
+      <input type="text" id="q" placeholder="Linje, hållplats, destination, orsak…" />
+
+      <label for="statusFilter">Status</label>
+      <select id="statusFilter">
+        <option value="">Alla</option>
+        <option value="Forsenad">Försenad</option>
+        <option value="Hoppar over hallplats">Hoppar över hållplats</option>
+        <option value="Installd (nar inte slutstation)">Inställd (når inte slutstation)</option>
+        <option value="Installd tur">Inställd hel tur</option>
+        <option value="Fore tiden">Före tiden</option>
+      </select>
+
+      <label for="pageSize">Rader/sida</label>
+      <select id="pageSize">
+        <option>25</option>
+        <option selected>50</option>
+        <option>100</option>
+        <option>250</option>
+      </select>
+    </div>
+
+    <div class="table-scroll">
+      <table id="logTable">
+        <thead>
+          <tr>
+            <th class="sortable" data-key="line">Linje<span class="arrow"></span></th>
+            <th>Resa</th>
+            <th class="sortable" data-key="status">Status<span class="arrow"></span></th>
+            <th class="sortable" data-key="delayMin">Försening<span class="arrow"></span></th>
+            <th>Schemalagd</th>
+            <th>Faktisk</th>
+            <th>Orsak (bäst möjliga koppling)</th>
+            <th class="sortable" data-key="lastSeen">Senast sedd<span class="arrow"></span></th>
+            <th class="sortable" data-key="polls">Pollningar<span class="arrow"></span></th>
+          </tr>
+        </thead>
+        <tbody id="logBody"></tbody>
+      </table>
+    </div>
+
+    <div class="pager">
+      <span id="pageInfo"></span>
+      <button id="prevBtn">← Föreg.</button>
+      <button id="nextBtn">Nästa →</button>
+    </div>
+  </section>
+
+  <footer>
+    Källa: Trafiklab GTFS Regional (TripUpdates + ServiceAlerts), operatör <code>skane</code>.
+    "Orsak" är bäst-möjlig koppling mot en aktiv Service Alert (trip → hållplats → linje) —
+    de flesta rutinförseningar saknar en registrerad orsak i feeden.
+  </footer>
+</div>
+
+<script type="application/json" id="raw-data">__DATA_JSON__</script>
+<script>
+(function () {
+  var data = JSON.parse(document.getElementById('raw-data').textContent);
+
+  function statusClass(status) {
+    if (status === 'Forsenad') return 'delayed';
+    if (status === 'Hoppar over hallplats' || status === 'Installd (nar inte slutstation)' || status === 'Installd tur') return 'skipped';
+    if (status === 'Fore tiden') return 'ok';
+    return 'ok';
+  }
+  function statusLabel(status) {
+    return ({
+      'Forsenad': 'Försenad',
+      'Hoppar over hallplats': 'Hoppar hållplats',
+      'Installd (nar inte slutstation)': 'Inställd (delvis)',
+      'Installd tur': 'Inställd (hel tur)',
+      'Fore tiden': 'Före tiden',
+      'OK/marginell': 'Marginell'
+    })[status] || status;
+  }
+  function fmtTime(hhmm) { return hhmm || '–'; }
+  function fmtDelay(m) {
+    if (m === null || m === undefined) return '–';
+    var sign = m > 0 ? '+' : '';
+    return sign + m.toFixed(1) + ' min';
+  }
+  function fmtSeen(iso) {
+    if (!iso) return '–';
+    var d = new Date(iso);
+    return d.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  // ---- Stat strip ----
+  var total = data.length;
+  var lines = new Set(data.map(function (r) { return r.line; }));
+  var cancelledLike = data.filter(function (r) {
+    return r.status === 'Installd tur' || r.status === 'Installd (nar inte slutstation)' || r.status === 'Hoppar over hallplats';
+  }).length;
+  var delayVals = data.map(function (r) { return r.delayMin; }).filter(function (v) { return v !== null && v !== undefined && v > 0; });
+  var avgDelay = delayVals.length ? (delayVals.reduce(function (a, b) { return a + b; }, 0) / delayVals.length) : 0;
+  var worst = data.reduce(function (acc, r) {
+    return (r.delayMin !== null && r.delayMin !== undefined && r.delayMin > (acc ? acc.delayMin : -Infinity)) ? r : acc;
+  }, null);
+
+  var stats = [
+    { label: 'Registrerade avvikelser', value: total.toLocaleString('sv-SE'), sub: 'rader idag', cls: '' },
+    { label: 'Distinkta linjer', value: lines.size, sub: 'påverkade', cls: '' },
+    { label: 'Inställda / hoppade', value: cancelledLike.toLocaleString('sv-SE'), sub: 'hållplatser & turer', cls: 'crit' },
+    { label: 'Snittförsening', value: avgDelay.toFixed(1) + ' min', sub: 'bland försenade', cls: '' },
+    { label: 'Värsta försening', value: worst ? fmtDelay(worst.delayMin) : '–', sub: worst ? ('linje ' + worst.line + ' → ' + worst.dest) : '', cls: 'crit' }
+  ];
+  var stripEl = document.getElementById('statStrip');
+  stats.forEach(function (s) {
+    var div = document.createElement('div');
+    div.className = 'stat' + (s.cls ? ' ' + s.cls : '');
+    div.innerHTML = '<div class="label">' + s.label + '</div><div class="value">' + s.value + '</div><div class="sub">' + s.sub + '</div>';
+    stripEl.appendChild(div);
+  });
+
+  var lastSeenMax = data.reduce(function (acc, r) { return (r.lastSeen && r.lastSeen > acc) ? r.lastSeen : acc; }, '');
+  document.getElementById('metaLine').textContent = total.toLocaleString('sv-SE') + ' rader · senaste pollning ' + (lastSeenMax ? fmtSeen(lastSeenMax) : '–') + ' · alla tider lokal tid';
+
+  // ---- Per-line summary ----
+  var byLine = {};
+  data.forEach(function (r) {
+    var k = r.line || '?';
+    if (!byLine[k]) byLine[k] = { line: k, count: 0, delaySum: 0, delayN: 0, worst: 0, cancelled: 0, dests: {} };
+    var g = byLine[k];
+    g.count++;
+    if (r.delayMin) { g.delaySum += Math.max(r.delayMin, 0); g.delayN++; g.worst = Math.max(g.worst, r.delayMin); }
+    if (r.status === 'Installd tur' || r.status === 'Installd (nar inte slutstation)' || r.status === 'Hoppar over hallplats') g.cancelled++;
+    g.dests[r.dest] = (g.dests[r.dest] || 0) + 1;
+  });
+  var lineRows = Object.values(byLine).sort(function (a, b) { return b.count - a.count; });
+  var lineBody = document.querySelector('#lineTable tbody');
+  lineRows.forEach(function (g) {
+    var topDest = Object.entries(g.dests).sort(function (a, b) { return b[1] - a[1]; })[0];
+    var tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td><span class="line-badge">' + g.line + '</span></td>' +
+      '<td>' + (topDest ? topDest[0] : '–') + '</td>' +
+      '<td class="num">' + g.count + '</td>' +
+      '<td class="num">' + (g.delayN ? (g.delaySum / g.delayN).toFixed(1) + ' min' : '–') + '</td>' +
+      '<td class="num">' + (g.worst ? g.worst.toFixed(1) + ' min' : '–') + '</td>' +
+      '<td class="num">' + (g.cancelled || '–') + '</td>';
+    lineBody.appendChild(tr);
+  });
+
+  // ---- Detail log: filter, sort, paginate ----
+  var qEl = document.getElementById('q');
+  var statusFilterEl = document.getElementById('statusFilter');
+  var pageSizeEl = document.getElementById('pageSize');
+  var logBody = document.getElementById('logBody');
+  var pageInfo = document.getElementById('pageInfo');
+  var logCount = document.getElementById('logCount');
+
+  var sortKey = 'delayMin';
+  var sortDir = -1;
+  var page = 0;
+
+  function applyFilters() {
+    var q = qEl.value.trim().toLowerCase();
+    var statusVal = statusFilterEl.value;
+    var rows = data.filter(function (r) {
+      if (statusVal && r.status !== statusVal) return false;
+      if (!q) return true;
+      return [r.line, r.dest, r.stop, r.reason].some(function (f) {
+        return f && String(f).toLowerCase().indexOf(q) !== -1;
+      });
+    });
+    rows.sort(function (a, b) {
+      var av = a[sortKey], bv = b[sortKey];
+      if (av === null || av === undefined) av = sortKey === 'delayMin' ? -Infinity : '';
+      if (bv === null || bv === undefined) bv = sortKey === 'delayMin' ? -Infinity : '';
+      if (av < bv) return -1 * sortDir;
+      if (av > bv) return 1 * sortDir;
+      return 0;
+    });
+    return rows;
+  }
+
+  function render() {
+    var rows = applyFilters();
+    var pageSize = parseInt(pageSizeEl.value, 10);
+    var pages = Math.max(1, Math.ceil(rows.length / pageSize));
+    if (page >= pages) page = pages - 1;
+    if (page < 0) page = 0;
+    var slice = rows.slice(page * pageSize, page * pageSize + pageSize);
+
+    logCount.textContent = rows.length.toLocaleString('sv-SE') + ' rader (av ' + data.length.toLocaleString('sv-SE') + ' totalt)';
+    logBody.innerHTML = slice.map(function (r) {
+      var cls = statusClass(r.status);
+      var reasonHtml = r.reason
+        ? '<span class="reason" title="' + r.reason.replace(/"/g, '&quot;') + '">' + r.reason + '</span>'
+        : '<span class="reason none">okänd</span>';
+      return (
+        '<tr>' +
+        '<td><span class="line-badge">' + (r.line || '–') + '</span></td>' +
+        '<td><span class="dest-stop">' + r.stop + '</span><span class="dest-arrow">→</span>' + r.dest + '</td>' +
+        '<td><span class="chip ' + cls + '">' + statusLabel(r.status) + '</span></td>' +
+        '<td class="num">' + fmtDelay(r.delayMin) + '</td>' +
+        '<td class="num">' + fmtTime(r.schedDep || r.schedArr) + '</td>' +
+        '<td class="num">' + fmtTime(r.actDep || r.actArr) + '</td>' +
+        '<td>' + reasonHtml + '</td>' +
+        '<td class="num">' + fmtSeen(r.lastSeen) + '</td>' +
+        '<td class="num">' + r.polls + '</td>' +
+        '</tr>'
+      );
+    }).join('');
+
+    pageInfo.textContent = 'Sida ' + (page + 1) + ' / ' + pages;
+    document.getElementById('prevBtn').disabled = page <= 0;
+    document.getElementById('nextBtn').disabled = page >= pages - 1;
+
+    document.querySelectorAll('#logTable th.sortable').forEach(function (th) {
+      var arrow = th.querySelector('.arrow');
+      arrow.textContent = th.dataset.key === sortKey ? (sortDir === 1 ? '▲' : '▼') : '';
+    });
+  }
+
+  qEl.addEventListener('input', function () { page = 0; render(); });
+  statusFilterEl.addEventListener('change', function () { page = 0; render(); });
+  pageSizeEl.addEventListener('change', function () { page = 0; render(); });
+  document.getElementById('prevBtn').addEventListener('click', function () { page--; render(); });
+  document.getElementById('nextBtn').addEventListener('click', function () { page++; render(); });
+  document.querySelectorAll('#logTable th.sortable').forEach(function (th) {
+    th.addEventListener('click', function () {
+      var key = th.dataset.key;
+      if (sortKey === key) { sortDir *= -1; } else { sortKey = key; sortDir = key === 'line' ? 1 : -1; }
+      render();
+    });
+  });
+
+  render();
+})();
+</script>
