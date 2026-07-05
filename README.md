@@ -8,6 +8,29 @@ var 2:e timme via GitHub Actions och bygger upp en historik i `data/forseningar.
 (SQLite) — tänkt som underlag för kompensationsanspråk, klagomål till Skånetrafiken
 om återkommande problem, och egen statistik.
 
+## Dokumentation
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — flödet i detalj, designbeslut och varför.
+- [docs/DATA_DICTIONARY.md](docs/DATA_DICTIONARY.md) — alla tabeller och kolumner.
+- [docs/RUNBOOK.md](docs/RUNBOOK.md) — nyckelrotation, manuell scan, dashboard, felsökning.
+
+## Snabbstart
+
+```bash
+git clone https://github.com/ThorstenGru/SkanetrafikenForseningar.git
+cd SkanetrafikenForseningar
+pip install -r requirements.txt
+export TRAFIKLAB_STATIC_KEY=...      # från developer.trafiklab.se
+export TRAFIKLAB_REALTIME_KEY=...
+python src/scan.py                   # kör en scan, skriver till data/forseningar.db
+python src/build_dashboard.py        # bygger dashboard.html för idag
+```
+
+I produktion behövs inget av ovanstående lokalt — GitHub Actions kör `scan.py`
+automatiskt varannan timme och committar resultatet. Se
+[docs/RUNBOOK.md](docs/RUNBOOK.md) för hur du genererar en dashboard från den
+datan utan att röra API-nycklarna alls.
+
 ## Arkitektur
 
 1. **Statiskt index** (`data/static_index.sqlite`) — rutter, hållplatser och varje
@@ -60,12 +83,21 @@ repots secrets.
 i klartext i en chattkonversation och bör roteras på developer.trafiklab.se
 så snart som möjligt — uppdatera sedan GitHub-secrets med `gh secret set`.
 
+## Verktyg i repot
+
+| Script | Syfte |
+|---|---|
+| `src/scan.py` | Kör en scan (statisk uppdatering vid behov + realtidsdata → databas). Körs automatiskt av GitHub Actions. |
+| `src/build_dashboard.py` | Bygger en fristående HTML-dashboard (filter/sortering/orsak) för en given dag, helt från lokal data. |
+| `src/static_index.py` | Kan köras separat för att tvinga fram en omgång av det statiska indexet. |
+
 ## Kända begränsningar / framtida idéer
 
 - Ingen väderdata korrelerad ännu (skulle stärka mönsteranalys).
 - Inget fordons-ID (kräver `VehiclePositions.pb`, ej implementerat).
-- Ingen rapport-/dashboard-vy ännu — just nu är `data/forseningar.db` rådata.
-  Kan byggas som ett separat script som t.ex. filtrerar på dina egna linjer/hållplatser
-  och genererar ett underlag att skicka till Skånetrafiken.
+- Ingen filtrering på "mina linjer/hållplatser" ännu — dashboarden visar hela
+  nätet. Ett färdigt underlag riktat mot en specifik kompensationsanmälan till
+  Skånetrafiken (bara dina egna resor) är nästa naturliga steg ovanpå
+  `build_dashboard.py`.
 - `data/forseningar.db` växer obegränsat. Fungerar fint i git ett tag, men om den
   blir stor (hundratals MB) kan det bli aktuellt att dela upp per månad/år.
