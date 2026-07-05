@@ -1,0 +1,32 @@
+name: Daily housekeeping
+
+on:
+  schedule:
+    - cron: "30 2 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  housekeeping:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Coverage check (yesterday)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python src/coverage_check.py
+
+      - name: Delete data older than retention window
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python src/housekeeping.py

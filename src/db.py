@@ -1,195 +1,139 @@
-"""SQLite schema and upsert helpers for the delay/alert history database."""
+"""Postgres (Supabase) connection and batch upsert helpers.
 
-import os
-import sqlite3
+Schema lives in schema.sql — apply it once against a fresh project. This
+module only contains runtime read/write helpers, no DDL.
+
+Everything is batched via execute_values (one round-trip per table per scan,
+not one per row) — a single scan can touch 5,000-15,000 delay rows, and doing
+that as individual statements against a cloud DB is slow enough to blow past
+Supabase's statement timeout. See docs/ARCHITECTURE.md.
+"""
+
+import psycopg2
+import psycopg2.extras
 
 import config
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS delays (
-    trip_id TEXT NOT NULL,
-    trip_start_date TEXT NOT NULL,
-    route_id TEXT,
-    route_short_name TEXT,
-    direction_id INTEGER,
-    destination_stop_name TEXT,
-    stop_id TEXT NOT NULL,
-    stop_name TEXT,
-    stop_sequence INTEGER,
-    is_final_stop INTEGER DEFAULT 0,
-    stop_schedule_relationship TEXT,
-    trip_schedule_relationship TEXT,
-    arrival_delay_sec INTEGER,
-    departure_delay_sec INTEGER,
-    arrival_time_epoch INTEGER,
-    departure_time_epoch INTEGER,
-    scheduled_arrival_epoch INTEGER,
-    scheduled_departure_epoch INTEGER,
-    max_abs_delay_sec INTEGER,
-    weekday INTEGER,
-    first_seen_at TEXT NOT NULL,
-    last_seen_at TEXT NOT NULL,
-    poll_count INTEGER DEFAULT 1,
-    PRIMARY KEY (trip_id, trip_start_date, stop_id)
-);
-
-CREATE TABLE IF NOT EXISTS trip_cancellations (
-    trip_id TEXT NOT NULL,
-    trip_start_date TEXT NOT NULL,
-    route_id TEXT,
-    route_short_name TEXT,
-    destination_stop_name TEXT,
-    first_seen_at TEXT NOT NULL,
-    last_seen_at TEXT NOT NULL,
-    poll_count INTEGER DEFAULT 1,
-    PRIMARY KEY (trip_id, trip_start_date)
-);
-
-CREATE TABLE IF NOT EXISTS alerts (
-    alert_uid TEXT PRIMARY KEY,
-    cause_code INTEGER,
-    cause_label TEXT,
-    effect_code INTEGER,
-    effect_label TEXT,
-    header_text TEXT,
-    description_text TEXT,
-    active_period_start_epoch INTEGER,
-    active_period_end_epoch INTEGER,
-    first_seen_at TEXT NOT NULL,
-    last_seen_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS alert_entities (
-    alert_uid TEXT NOT NULL,
-    route_id TEXT,
-    trip_id TEXT,
-    stop_id TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_alert_entities_route ON alert_entities(route_id);
-CREATE INDEX IF NOT EXISTS idx_alert_entities_stop ON alert_entities(stop_id);
-CREATE INDEX IF NOT EXISTS idx_alert_entities_trip ON alert_entities(trip_id);
-
-CREATE TABLE IF NOT EXISTS scan_runs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_at TEXT NOT NULL,
-    delays_seen INTEGER,
-    delays_new INTEGER,
-    cancellations_seen INTEGER,
-    alerts_seen INTEGER,
-    alerts_new INTEGER,
-    static_refreshed INTEGER DEFAULT 0,
-    error TEXT
-);
-"""
+DELAY_COLUMNS = [
+    "trip_id", "trip_start_date", "route_id", "route_short_name", "direction_id",
+    "destination_stop_name", "stop_id", "stop_name", "stop_sequence", "is_final_stop",
+    "stop_schedule_relationship", "trip_schedule_relationship",
+    "arrival_delay_sec", "departure_delay_sec", "arrival_time", "departure_time",
+    "scheduled_arrival", "scheduled_departure",
+]
 
 
 def connect():
-    os.makedirs(config.DATA_DIR, exist_ok=True)
-    conn = sqlite3.connect(config.DB_PATH)
-    conn.executescript(SCHEMA)
-    return conn
+    return psycopg2.connect(config.database_url(), connect_timeout=30)
 
 
-def upsert_delay(conn, row, now_iso):
-    """row: dict matching the delays columns except first/last_seen_at/poll_count."""
-    existing = conn.execute(
-        "SELECT max_abs_delay_sec, poll_count FROM delays WHERE trip_id=? AND trip_start_date=? AND stop_id=?",
-        (row["trip_id"], row["trip_start_date"], row["stop_id"]),
-    ).fetchone()
+def upsert_delays_batch(cur, rows, now):
+    """rows: list of dicts with DELAY_COLUMNS keys. Returns count of newly-inserted rows."""
+    if not rows:
+        return 0
+    values = [
+        tuple(row[c] for c in DELAY_COLUMNS) + (max(abs(row.get("arrival_delay_sec") or 0), abs(row.get("departure_delay_sec") or 0)), now, now)
+        for row in rows
+    ]
+    template = "(" + ", ".join(["%s"] * (len(DELAY_COLUMNS) + 3)) + ")"
+    results = psycopg2.extras.execute_values(
+        cur,
+        """INSERT INTO delays (%s, max_abs_delay_sec, first_seen_at, last_seen_at)
+           VALUES %%s
+           ON CONFLICT (trip_id, trip_start_date, stop_sequence) DO UPDATE SET
+               arrival_delay_sec = EXCLUDED.arrival_delay_sec,
+               departure_delay_sec = EXCLUDED.departure_delay_sec,
+               arrival_time = EXCLUDED.arrival_time,
+               departure_time = EXCLUDED.departure_time,
+               stop_schedule_relationship = EXCLUDED.stop_schedule_relationship,
+               trip_schedule_relationship = EXCLUDED.trip_schedule_relationship,
+               max_abs_delay_sec = GREATEST(delays.max_abs_delay_sec, EXCLUDED.max_abs_delay_sec),
+               last_seen_at = EXCLUDED.last_seen_at,
+               poll_count = delays.poll_count + 1
+           RETURNING (xmax = 0) AS inserted""" % ", ".join(DELAY_COLUMNS),
+        values,
+        template=template,
+        page_size=1000,
+        fetch=True,
+    )
+    return sum(1 for r in results if r[0])
 
-    abs_delay = max(abs(row.get("arrival_delay_sec") or 0), abs(row.get("departure_delay_sec") or 0))
 
-    if existing is None:
-        conn.execute(
-            """INSERT INTO delays (
-                trip_id, trip_start_date, route_id, route_short_name, direction_id,
-                destination_stop_name, stop_id, stop_name, stop_sequence, is_final_stop,
-                stop_schedule_relationship, trip_schedule_relationship,
-                arrival_delay_sec, departure_delay_sec, arrival_time_epoch, departure_time_epoch,
-                scheduled_arrival_epoch, scheduled_departure_epoch, max_abs_delay_sec, weekday,
-                first_seen_at, last_seen_at, poll_count
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
-            (
-                row["trip_id"], row["trip_start_date"], row["route_id"], row["route_short_name"],
-                row["direction_id"], row["destination_stop_name"], row["stop_id"], row["stop_name"],
-                row["stop_sequence"], row["is_final_stop"], row["stop_schedule_relationship"],
-                row["trip_schedule_relationship"], row["arrival_delay_sec"], row["departure_delay_sec"],
-                row["arrival_time_epoch"], row["departure_time_epoch"], row["scheduled_arrival_epoch"],
-                row["scheduled_departure_epoch"], abs_delay, row["weekday"], now_iso, now_iso,
-            ),
+def upsert_cancellations_batch(cur, rows, now):
+    if not rows:
+        return 0
+    values = [(r["trip_id"], r["trip_start_date"], r["route_id"], r["route_short_name"], r["destination_stop_name"], now, now) for r in rows]
+    results = psycopg2.extras.execute_values(
+        cur,
+        """INSERT INTO trip_cancellations
+           (trip_id, trip_start_date, route_id, route_short_name, destination_stop_name, first_seen_at, last_seen_at)
+           VALUES %s
+           ON CONFLICT (trip_id, trip_start_date) DO UPDATE SET
+               last_seen_at = EXCLUDED.last_seen_at,
+               poll_count = trip_cancellations.poll_count + 1
+           RETURNING (xmax = 0) AS inserted""",
+        values,
+        fetch=True,
+    )
+    return sum(1 for r in results if r[0])
+
+
+def upsert_seen_trips_batch(cur, rows, now):
+    """rows: list of (trip_id, trip_start_date, route_short_name)."""
+    if not rows:
+        return
+    values = [(trip_id, trip_start_date, route_short_name, now, now) for trip_id, trip_start_date, route_short_name in rows]
+    psycopg2.extras.execute_values(
+        cur,
+        """INSERT INTO seen_trips (trip_id, trip_start_date, route_short_name, first_seen_at, last_seen_at)
+           VALUES %s
+           ON CONFLICT (trip_id, trip_start_date) DO UPDATE SET
+               last_seen_at = EXCLUDED.last_seen_at,
+               poll_count = seen_trips.poll_count + 1""",
+        values,
+    )
+
+
+def upsert_alerts_batch(cur, alerts, now):
+    """alerts: list of (alert_uid, fields_dict, entities_list). Returns count newly-inserted."""
+    if not alerts:
+        return 0
+    values = [
+        (uid, f["cause_code"], f["cause_label"], f["effect_code"], f["effect_label"],
+         f["header_text"], f["description_text"], f["active_period_start"], f["active_period_end"], now, now)
+        for uid, f, _ in alerts
+    ]
+    results = psycopg2.extras.execute_values(
+        cur,
+        """INSERT INTO alerts (
+               alert_uid, cause_code, cause_label, effect_code, effect_label,
+               header_text, description_text, active_period_start, active_period_end,
+               first_seen_at, last_seen_at
+           ) VALUES %s
+           ON CONFLICT (alert_uid) DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at
+           RETURNING alert_uid, (xmax = 0) AS inserted""",
+        values,
+        fetch=True,
+    )
+    inserted_uids = {uid for uid, was_inserted in results if was_inserted}
+
+    entity_rows = [
+        (uid, e.get("route_id"), e.get("trip_id"), e.get("stop_id"))
+        for uid, _, entities in alerts if uid in inserted_uids
+        for e in entities
+    ]
+    if entity_rows:
+        psycopg2.extras.execute_values(
+            cur,
+            "INSERT INTO alert_entities (alert_uid, route_id, trip_id, stop_id) VALUES %s",
+            entity_rows,
         )
-        return True
-    else:
-        new_max = max(existing[0] or 0, abs_delay)
-        conn.execute(
-            """UPDATE delays SET
-                arrival_delay_sec=?, departure_delay_sec=?, arrival_time_epoch=?, departure_time_epoch=?,
-                stop_schedule_relationship=?, trip_schedule_relationship=?,
-                max_abs_delay_sec=?, last_seen_at=?, poll_count=poll_count+1
-               WHERE trip_id=? AND trip_start_date=? AND stop_id=?""",
-            (
-                row["arrival_delay_sec"], row["departure_delay_sec"], row["arrival_time_epoch"],
-                row["departure_time_epoch"], row["stop_schedule_relationship"], row["trip_schedule_relationship"],
-                new_max, now_iso, row["trip_id"], row["trip_start_date"], row["stop_id"],
-            ),
-        )
-        return False
+    return len(inserted_uids)
 
 
-def upsert_cancellation(conn, row, now_iso):
-    existing = conn.execute(
-        "SELECT 1 FROM trip_cancellations WHERE trip_id=? AND trip_start_date=?",
-        (row["trip_id"], row["trip_start_date"]),
-    ).fetchone()
-    if existing is None:
-        conn.execute(
-            """INSERT INTO trip_cancellations
-               (trip_id, trip_start_date, route_id, route_short_name, destination_stop_name,
-                first_seen_at, last_seen_at, poll_count)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 1)""",
-            (row["trip_id"], row["trip_start_date"], row["route_id"], row["route_short_name"],
-             row["destination_stop_name"], now_iso, now_iso),
-        )
-        return True
-    else:
-        conn.execute(
-            "UPDATE trip_cancellations SET last_seen_at=?, poll_count=poll_count+1 WHERE trip_id=? AND trip_start_date=?",
-            (now_iso, row["trip_id"], row["trip_start_date"]),
-        )
-        return False
-
-
-def upsert_alert(conn, alert_uid, fields, entities, now_iso):
-    existing = conn.execute("SELECT 1 FROM alerts WHERE alert_uid=?", (alert_uid,)).fetchone()
-    if existing is None:
-        conn.execute(
-            """INSERT INTO alerts (
-                alert_uid, cause_code, cause_label, effect_code, effect_label,
-                header_text, description_text, active_period_start_epoch, active_period_end_epoch,
-                first_seen_at, last_seen_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                alert_uid, fields["cause_code"], fields["cause_label"], fields["effect_code"],
-                fields["effect_label"], fields["header_text"], fields["description_text"],
-                fields["active_period_start_epoch"], fields["active_period_end_epoch"], now_iso, now_iso,
-            ),
-        )
-        conn.executemany(
-            "INSERT INTO alert_entities (alert_uid, route_id, trip_id, stop_id) VALUES (?, ?, ?, ?)",
-            [(alert_uid, e.get("route_id"), e.get("trip_id"), e.get("stop_id")) for e in entities],
-        )
-        return True
-    else:
-        conn.execute("UPDATE alerts SET last_seen_at=? WHERE alert_uid=?", (now_iso, alert_uid))
-        return False
-
-
-def record_scan_run(conn, stats):
-    conn.execute(
+def record_scan_run(cur, stats):
+    cur.execute(
         """INSERT INTO scan_runs (run_at, delays_seen, delays_new, cancellations_seen, alerts_seen, alerts_new, static_refreshed, error)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            stats["run_at"], stats["delays_seen"], stats["delays_new"], stats["cancellations_seen"],
-            stats["alerts_seen"], stats["alerts_new"], int(stats["static_refreshed"]), stats.get("error"),
-        ),
+           VALUES (%(run_at)s, %(delays_seen)s, %(delays_new)s, %(cancellations_seen)s, %(alerts_seen)s, %(alerts_new)s, %(static_refreshed)s, %(error)s)""",
+        stats,
     )

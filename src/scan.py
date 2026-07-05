@@ -1,5 +1,5 @@
 """Main entrypoint: refresh static index if stale, fetch TripUpdates +
-ServiceAlerts from Trafiklab, and upsert everything into data/forseningar.db.
+ServiceAlerts from Trafiklab, and upsert everything into Postgres (Supabase).
 
 Usage:
     python src/scan.py
@@ -7,7 +7,7 @@ Usage:
 
 import sqlite3
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import requests
 from google.transit import gtfs_realtime_pb2
@@ -45,17 +45,32 @@ def fetch_feed(url_tmpl, key, label):
     return feed
 
 
-def process_trip_updates(feed, trip_meta, stops, conn, now_iso):
-    delays_seen = 0
-    delays_new = 0
-    cancellations_seen = 0
+def _epoch_to_dt(epoch):
+    return datetime.fromtimestamp(epoch, tz=timezone.utc) if epoch is not None else None
+
+
+def _parse_start_date(start_date_str):
+    if not start_date_str:
+        return date.today()
+    return date(int(start_date_str[0:4]), int(start_date_str[4:6]), int(start_date_str[6:8]))
+
+
+def process_trip_updates(feed, trip_meta, stops, cur, now):
+    seen_rows = []       # (trip_id, trip_start_date, route_short_name)
+    cancellation_rows = []
+    delay_rows = []
 
     for entity in feed.entity:
         if not entity.HasField("trip_update"):
             continue
         tu = entity.trip_update
         trip_id = tu.trip.trip_id
-        start_date = tu.trip.start_date or datetime.now(timezone.utc).strftime("%Y%m%d")
+        if not trip_id:
+            # A handful of entities occasionally carry no trip_id at all
+            # (unassigned-vehicle noise in the feed) — nothing meaningful to
+            # key them on, and they'd collide with each other on insert.
+            continue
+        start_date = _parse_start_date(tu.trip.start_date)
         trip_sched_rel = config.TRIP_SCHEDULE_RELATIONSHIP_LABELS.get(tu.trip.schedule_relationship, str(tu.trip.schedule_relationship))
 
         meta = trip_meta.get(trip_id, {})
@@ -65,17 +80,15 @@ def process_trip_updates(feed, trip_meta, stops, conn, now_iso):
         direction_id = meta.get("direction_id")
         final_seq = meta.get("final_stop_sequence")
 
-        try:
-            weekday = datetime.strptime(start_date, "%Y%m%d").weekday()
-        except ValueError:
-            weekday = None
+        # Every trip we see at all, regardless of delay — the presence log
+        # that coverage_check.py diffs against the static schedule.
+        seen_rows.append((trip_id, start_date, route_short_name))
 
         if tu.trip.schedule_relationship == 3:  # CANCELED (whole trip)
-            cancellations_seen += 1
-            db.upsert_cancellation(conn, {
+            cancellation_rows.append({
                 "trip_id": trip_id, "trip_start_date": start_date, "route_id": route_id,
                 "route_short_name": route_short_name, "destination_stop_name": destination_stop_name,
-            }, now_iso)
+            })
             continue
 
         for stu in tu.stop_time_update:
@@ -93,7 +106,7 @@ def process_trip_updates(feed, trip_meta, stops, conn, now_iso):
             scheduled_arrival = (arrival_time - arrival_delay) if (arrival_time is not None and arrival_delay is not None) else None
             scheduled_departure = (departure_time - departure_delay) if (departure_time is not None and departure_delay is not None) else None
 
-            row = {
+            delay_rows.append({
                 "trip_id": trip_id,
                 "trip_start_date": start_date,
                 "route_id": route_id,
@@ -103,31 +116,37 @@ def process_trip_updates(feed, trip_meta, stops, conn, now_iso):
                 "stop_id": stu.stop_id,
                 "stop_name": stops.get(stu.stop_id, ""),
                 "stop_sequence": stu.stop_sequence,
-                "is_final_stop": 1 if (final_seq is not None and stu.stop_sequence == final_seq) else 0,
+                "is_final_stop": bool(final_seq is not None and stu.stop_sequence == final_seq),
                 "stop_schedule_relationship": stop_sched_rel,
                 "trip_schedule_relationship": trip_sched_rel,
                 "arrival_delay_sec": arrival_delay,
                 "departure_delay_sec": departure_delay,
-                "arrival_time_epoch": arrival_time,
-                "departure_time_epoch": departure_time,
-                "scheduled_arrival_epoch": scheduled_arrival,
-                "scheduled_departure_epoch": scheduled_departure,
-                "weekday": weekday,
-            }
-            delays_seen += 1
-            if db.upsert_delay(conn, row, now_iso):
-                delays_new += 1
+                "arrival_time": _epoch_to_dt(arrival_time),
+                "departure_time": _epoch_to_dt(departure_time),
+                "scheduled_arrival": _epoch_to_dt(scheduled_arrival),
+                "scheduled_departure": _epoch_to_dt(scheduled_departure),
+            })
 
-    return delays_seen, delays_new, cancellations_seen
+    # Safety net: a single execute_values() upsert can't touch the same row
+    # twice, so defensively collapse any remaining duplicate keys (keeping
+    # the last occurrence) before batching. In practice this should be a
+    # no-op once malformed empty-trip_id entities are filtered above.
+    seen_rows = list({(t, d): (t, d, r) for t, d, r in seen_rows}.values())
+    cancellation_rows = list({(r["trip_id"], r["trip_start_date"]): r for r in cancellation_rows}.values())
+    delay_rows = list({(r["trip_id"], r["trip_start_date"], r["stop_sequence"]): r for r in delay_rows}.values())
+
+    db.upsert_seen_trips_batch(cur, seen_rows, now)
+    cancellations_new = db.upsert_cancellations_batch(cur, cancellation_rows, now)
+    delays_new = db.upsert_delays_batch(cur, delay_rows, now)
+
+    return len(delay_rows), delays_new, len(cancellation_rows)
 
 
-def process_alerts(feed, conn, now_iso):
-    alerts_seen = 0
-    alerts_new = 0
+def process_alerts(feed, cur, now):
+    alerts = []
     for entity in feed.entity:
         if not entity.HasField("alert"):
             continue
-        alerts_seen += 1
         a = entity.alert
         header = a.header_text.translation[0].text if a.header_text.translation else ""
         desc = a.description_text.translation[0].text if a.description_text.translation else ""
@@ -141,20 +160,23 @@ def process_alerts(feed, conn, now_iso):
             "effect_label": config.EFFECT_LABELS.get(a.effect, str(a.effect)),
             "header_text": header,
             "description_text": desc,
-            "active_period_start_epoch": period_start,
-            "active_period_end_epoch": period_end,
+            "active_period_start": _epoch_to_dt(period_start),
+            "active_period_end": _epoch_to_dt(period_end),
         }
         entities = [
             {"route_id": ie.route_id or None, "trip_id": ie.trip.trip_id or None, "stop_id": ie.stop_id or None}
             for ie in a.informed_entity
         ]
-        if db.upsert_alert(conn, entity.id, fields, entities, now_iso):
-            alerts_new += 1
-    return alerts_seen, alerts_new
+        alerts.append((entity.id, fields, entities))
+
+    alerts = list({uid: (uid, f, e) for uid, f, e in alerts}.values())  # defensive, see process_trip_updates
+
+    alerts_new = db.upsert_alerts_batch(cur, alerts, now)
+    return len(alerts), alerts_new
 
 
 def main():
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc)
     static_refreshed = static_index.ensure_index()
 
     static_conn = sqlite3.connect(config.STATIC_INDEX_PATH)
@@ -162,14 +184,15 @@ def main():
     static_conn.close()
 
     conn = db.connect()
+    cur = conn.cursor()
     error = None
     delays_seen = delays_new = cancellations_seen = alerts_seen = alerts_new = 0
     try:
         tu_feed = fetch_feed(config.TRIPUPDATES_URL_TMPL, config.realtime_key(), "TripUpdates")
-        delays_seen, delays_new, cancellations_seen = process_trip_updates(tu_feed, trip_meta, stops, conn, now_iso)
+        delays_seen, delays_new, cancellations_seen = process_trip_updates(tu_feed, trip_meta, stops, cur, now)
 
         alerts_feed = fetch_feed(config.SERVICEALERTS_URL_TMPL, config.realtime_key(), "ServiceAlerts")
-        alerts_seen, alerts_new = process_alerts(alerts_feed, conn, now_iso)
+        alerts_seen, alerts_new = process_alerts(alerts_feed, cur, now)
 
         conn.commit()
         print("Klart: %d forseningar sedda (%d nya), %d installda turer, %d alerts sedda (%d nya)." % (
@@ -179,12 +202,13 @@ def main():
         error = str(exc)
         print("FEL under scan: %s" % error, file=sys.stderr)
     finally:
-        db.record_scan_run(conn, {
-            "run_at": now_iso, "delays_seen": delays_seen, "delays_new": delays_new,
+        db.record_scan_run(cur, {
+            "run_at": now, "delays_seen": delays_seen, "delays_new": delays_new,
             "cancellations_seen": cancellations_seen, "alerts_seen": alerts_seen, "alerts_new": alerts_new,
             "static_refreshed": bool(static_refreshed), "error": error,
         })
         conn.commit()
+        cur.close()
         conn.close()
 
     if error:

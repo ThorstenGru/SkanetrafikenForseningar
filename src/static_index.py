@@ -1,7 +1,12 @@
 """Download and cache Trafiklab's static GTFS Regional data, then distill it
-into a small SQLite index (routes, stops, per-trip destination) that we keep
-committed to the repo. The raw GTFS zip (~300 MB uncompressed) is downloaded
-to a scratch directory and deleted again — it is never committed.
+into a small SQLite index (routes, stops, per-trip destination, and calendar
+service-day rules) that we keep committed to the repo. The raw GTFS zip
+(~300 MB uncompressed) is downloaded to a scratch directory and deleted
+again — it is never committed.
+
+The calendar/calendar_dates tables exist so coverage_check.py can answer
+"which trip_ids were actually scheduled to run on date X" without needing
+the raw stop_times.txt.
 """
 
 import csv
@@ -96,9 +101,17 @@ def rebuild_index():
         conn.execute("CREATE TABLE stops (stop_id TEXT PRIMARY KEY, stop_name TEXT)")
         conn.execute(
             "CREATE TABLE trip_meta ("
-            "trip_id TEXT PRIMARY KEY, route_id TEXT, direction_id INTEGER, "
+            "trip_id TEXT PRIMARY KEY, route_id TEXT, direction_id INTEGER, service_id TEXT, "
             "destination_stop_id TEXT, destination_stop_name TEXT, final_stop_sequence INTEGER)"
         )
+        conn.execute(
+            "CREATE TABLE calendar ("
+            "service_id TEXT PRIMARY KEY, monday INTEGER, tuesday INTEGER, wednesday INTEGER, "
+            "thursday INTEGER, friday INTEGER, saturday INTEGER, sunday INTEGER, "
+            "start_date TEXT, end_date TEXT)"
+        )
+        conn.execute("CREATE TABLE calendar_dates (service_id TEXT, date TEXT, exception_type INTEGER)")
+        conn.execute("CREATE INDEX idx_calendar_dates_svc ON calendar_dates (service_id, date)")
 
         conn.executemany("INSERT INTO routes VALUES (?, ?, ?)", [(k, v[0], v[1]) for k, v in routes.items()])
         conn.executemany("INSERT INTO stops VALUES (?, ?)", list(stops.items()))
@@ -112,16 +125,38 @@ def rebuild_index():
                     trip_id,
                     row.get("route_id", ""),
                     int(row["direction_id"]) if row.get("direction_id") not in (None, "") else None,
+                    row.get("service_id", ""),
                     dest_stop_id,
                     stops.get(dest_stop_id, "") if dest_stop_id else "",
                     dest_seq,
                 ))
-            conn.executemany("INSERT INTO trip_meta VALUES (?, ?, ?, ?, ?, ?)", trip_rows)
+            conn.executemany("INSERT INTO trip_meta VALUES (?, ?, ?, ?, ?, ?, ?)", trip_rows)
+
+        calendar_path = os.path.join(config.RAW_STATIC_CACHE_DIR, "calendar.txt")
+        calendar_rows = []
+        if os.path.exists(calendar_path):
+            with open(calendar_path, "r", encoding="utf-8-sig", newline="") as f:
+                for row in csv.DictReader(f):
+                    calendar_rows.append((
+                        row["service_id"], int(row["monday"]), int(row["tuesday"]), int(row["wednesday"]),
+                        int(row["thursday"]), int(row["friday"]), int(row["saturday"]), int(row["sunday"]),
+                        row["start_date"], row["end_date"],
+                    ))
+            conn.executemany("INSERT INTO calendar VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", calendar_rows)
+
+        calendar_dates_path = os.path.join(config.RAW_STATIC_CACHE_DIR, "calendar_dates.txt")
+        calendar_dates_rows = []
+        if os.path.exists(calendar_dates_path):
+            with open(calendar_dates_path, "r", encoding="utf-8-sig", newline="") as f:
+                for row in csv.DictReader(f):
+                    calendar_dates_rows.append((row["service_id"], row["date"], int(row["exception_type"])))
+            conn.executemany("INSERT INTO calendar_dates VALUES (?, ?, ?)", calendar_dates_rows)
 
         conn.execute("INSERT INTO meta VALUES (?)", (time.time(),))
         conn.commit()
         conn.close()
-        print("Statiskt index byggt: %d rutter, %d hallplatser, %d turer." % (len(routes), len(stops), len(trip_rows)))
+        print("Statiskt index byggt: %d rutter, %d hallplatser, %d turer, %d calendar-rader, %d calendar_dates-rader." % (
+            len(routes), len(stops), len(trip_rows), len(calendar_rows), len(calendar_dates_rows)))
         return True
     finally:
         if os.path.exists(config.RAW_STATIC_CACHE_DIR):

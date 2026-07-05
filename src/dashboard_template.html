@@ -361,6 +361,7 @@
             <th>Veckodag</th>
             <th class="sortable" data-key="count">Avvikelser<span class="arrow"></span></th>
             <th class="sortable" data-key="cancelled">Inställda/hoppade<span class="arrow"></span></th>
+            <th class="sortable" data-key="missingTrips">Aldrig sedda<span class="arrow"></span></th>
             <th class="sortable" data-key="avgDelay">Snittförsening<span class="arrow"></span></th>
             <th class="sortable" data-key="worst">Värst<span class="arrow"></span></th>
           </tr>
@@ -375,6 +376,7 @@
     <select id="dayFilter"></select>
     <span class="hint" id="dayHint"></span>
   </div>
+  <div class="hint" id="outOfWindowNotice" style="display:none;"></div>
 
   <section class="stats" id="statStrip"></section>
 
@@ -417,6 +419,7 @@
         <option value="Hoppar over hallplats">Hoppar över hållplats</option>
         <option value="Installd (nar inte slutstation)">Inställd (når inte slutstation)</option>
         <option value="Installd tur">Inställd hel tur</option>
+        <option value="Aldrig sedd">Aldrig sedd i feeden</option>
         <option value="Fore tiden">Före tiden</option>
       </select>
 
@@ -465,7 +468,9 @@
 <script type="application/json" id="raw-data">__DATA_JSON__</script>
 <script>
 (function () {
-  var data = JSON.parse(document.getElementById('raw-data').textContent);
+  var payload = JSON.parse(document.getElementById('raw-data').textContent);
+  var data = payload.rows;       // bounded window of raw detail rows (see --days/--date)
+  var trend = payload.trend;     // full-retention daily aggregate (cheap, always complete)
   data.forEach(function (r) {
     r.schedSort = r.schedDep || r.schedArr || '';
     r.actSort = r.actDep || r.actArr || '';
@@ -473,7 +478,7 @@
 
   function statusClass(status) {
     if (status === 'Forsenad') return 'delayed';
-    if (status === 'Hoppar over hallplats' || status === 'Installd (nar inte slutstation)' || status === 'Installd tur') return 'skipped';
+    if (status === 'Hoppar over hallplats' || status === 'Installd (nar inte slutstation)' || status === 'Installd tur' || status === 'Aldrig sedd') return 'skipped';
     if (status === 'Fore tiden') return 'ok';
     return 'ok';
   }
@@ -484,6 +489,7 @@
       'Installd (nar inte slutstation)': 'Inställd (delvis)',
       'Installd tur': 'Inställd (hel tur)',
       'Fore tiden': 'Före tiden',
+      'Aldrig sedd': 'Aldrig sedd i feeden',
       'OK/marginell': 'Marginell'
     })[status] || status;
   }
@@ -505,32 +511,25 @@
     return yyyymmdd.slice(0, 4) + '-' + yyyymmdd.slice(4, 6) + '-' + yyyymmdd.slice(6, 8);
   }
   function isCancelledLike(r) {
-    return r.status === 'Installd tur' || r.status === 'Installd (nar inte slutstation)' || r.status === 'Hoppar over hallplats';
+    return r.status === 'Installd tur' || r.status === 'Installd (nar inte slutstation)' || r.status === 'Hoppar over hallplats' || r.status === 'Aldrig sedd';
   }
 
   var lastSeenMax = data.reduce(function (acc, r) { return (r.lastSeen && r.lastSeen > acc) ? r.lastSeen : acc; }, '');
+  var trendTotal = trend.reduce(function (acc, g) { return acc + g.count; }, 0);
   document.getElementById('metaLine').textContent =
-    data.length.toLocaleString('sv-SE') + ' rader totalt · senaste pollning ' +
+    trendTotal.toLocaleString('sv-SE') + ' avvikelser over ' + trend.length + ' dagar (fullständig historik) · ' +
+    data.length.toLocaleString('sv-SE') + ' rader med full detalj i denna export · senaste pollning ' +
     (lastSeenMax ? fmtSeen(lastSeenMax) : '–') + ' · alla tider lokal tid';
 
-  // ---- History table (always full dataset, independent of day filter) ----
-  var byDate = {};
-  data.forEach(function (r) {
-    var k = r.date || '?';
-    if (!byDate[k]) byDate[k] = { date: k, count: 0, cancelled: 0, delaySum: 0, delayN: 0, worst: 0 };
-    var g = byDate[k];
-    g.count++;
-    if (isCancelledLike(r)) g.cancelled++;
-    if (r.delayMin) { g.delaySum += Math.max(r.delayMin, 0); g.delayN++; g.worst = Math.max(g.worst, r.delayMin); }
-  });
-  var dateRows = Object.values(byDate).map(function (g) {
-    g.avgDelay = g.delayN ? g.delaySum / g.delayN : 0;
-    return g;
-  }).sort(function (a, b) { return b.date < a.date ? -1 : (b.date > a.date ? 1 : 0); });
+  // ---- History table: precomputed server-side SQL aggregate over the full
+  // retention window (up to 45 days), independent of the bounded detail window.
+  var dateRows = trend.slice().sort(function (a, b) { return b.date < a.date ? -1 : (b.date > a.date ? 1 : 0); });
   var maxDayCount = dateRows.reduce(function (m, g) { return Math.max(m, g.count); }, 1);
+  var detailDates = new Set(data.map(function (r) { return r.date; }));
 
   var dayFilterEl = document.getElementById('dayFilter');
   var dayHintEl = document.getElementById('dayHint');
+  var outOfWindowEl = document.getElementById('outOfWindowNotice');
   var historyBody = document.querySelector('#historyTable tbody');
 
   var ALL = '__ALL__';
@@ -561,7 +560,8 @@
         '<td>' + wd + '</td>' +
         '<td class="num bar-cell"><span>' + g.count + '</span><span class="bar-track"><span class="bar-fill" style="width:' + pct + '%"></span></span></td>' +
         '<td class="num">' + (g.cancelled || '–') + '</td>' +
-        '<td class="num">' + (g.delayN ? (g.delaySum / g.delayN).toFixed(1) + ' min' : '–') + '</td>' +
+        '<td class="num">' + (g.missingTrips || '–') + '</td>' +
+        '<td class="num">' + (g.avgDelay ? g.avgDelay.toFixed(1) + ' min' : '–') + '</td>' +
         '<td class="num">' + (g.worst ? g.worst.toFixed(1) + ' min' : '–') + '</td>' +
         '</tr>'
       );
@@ -619,7 +619,7 @@
       g.count++;
       if (r.delayMin) { g.delaySum += Math.max(r.delayMin, 0); g.delayN++; g.worst = Math.max(g.worst, r.delayMin); }
       if (isCancelledLike(r)) g.cancelled++;
-      g.dests[r.dest] = (g.dests[r.dest] || 0) + 1;
+      if (r.dest) g.dests[r.dest] = (g.dests[r.dest] || 0) + 1;
     });
     var lineRows = Object.values(byLine).sort(function (a, b) { return b.count - a.count; });
     lineBody.innerHTML = lineRows.map(function (g) {
@@ -712,6 +712,16 @@
   function fullRender() {
     var scoped = selectedDay === ALL ? data : data.filter(function (r) { return r.date === selectedDay; });
     dayHintEl.textContent = scoped.length.toLocaleString('sv-SE') + ' rader denna vy';
+
+    if (selectedDay !== ALL && !detailDates.has(selectedDay) && scoped.length === 0) {
+      outOfWindowEl.style.display = '';
+      outOfWindowEl.textContent =
+        '⚠ Den här dagen ligger utanför detaljfönstret för den här exporten. Kör "python src/build_dashboard.py --date ' +
+        selectedDay + '" för att se fullständig radlogg för just den dagen.';
+    } else {
+      outOfWindowEl.style.display = 'none';
+    }
+
     renderHistoryTable();
     renderScoped(scoped);
     renderLog(scoped);

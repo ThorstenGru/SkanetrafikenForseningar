@@ -4,3 +4,4 @@ __pycache__/
 .env
 /dashboard.html
 /pages_site/
+/data/forseningar.db

@@ -13,11 +13,20 @@ SERVICEALERTS_URL_TMPL = "https://opendata.samtrafiken.se/gtfs-rt/{op}/ServiceAl
 # not daily, to keep a safe margin.
 STATIC_CACHE_MAX_AGE_DAYS = 7
 
+# How long detailed history is kept in Postgres before daily housekeeping
+# deletes it. Applies uniformly to delays, trip_cancellations, seen_trips,
+# missing_trips, alerts, and scan_runs.
+RETENTION_DAYS = 45
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(REPO_ROOT, "data")
-DB_PATH = os.path.join(DATA_DIR, "forseningar.db")
 STATIC_INDEX_PATH = os.path.join(DATA_DIR, "static_index.sqlite")
 RAW_STATIC_CACHE_DIR = os.path.join(REPO_ROOT, ".gtfs_static_raw")  # never committed
+
+
+def database_url():
+    """Postgres connection string (Supabase). Set as the DATABASE_URL secret."""
+    return get_key("DATABASE_URL")
 
 
 def get_key(env_var, fallback=None):
