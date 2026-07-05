@@ -184,12 +184,12 @@
 
   #lineTable thead th { cursor: default; }
 
-  #logTable thead th.sortable {
+  thead th.sortable {
     cursor: pointer;
     user-select: none;
   }
-  #logTable thead th.sortable:hover { color: var(--amber); }
-  #logTable thead th .arrow { opacity: 0.5; margin-left: 3px; }
+  thead th.sortable:hover { color: var(--amber); }
+  thead th .arrow { opacity: 0.5; margin-left: 3px; }
 
   tbody td {
     padding: 9px 12px;
@@ -357,12 +357,12 @@
       <table id="historyTable">
         <thead>
           <tr>
-            <th>Datum</th>
+            <th class="sortable" data-key="date">Datum<span class="arrow"></span></th>
             <th>Veckodag</th>
-            <th>Avvikelser</th>
-            <th>Inställda/hoppade</th>
-            <th>Snittförsening</th>
-            <th>Värst</th>
+            <th class="sortable" data-key="count">Avvikelser<span class="arrow"></span></th>
+            <th class="sortable" data-key="cancelled">Inställda/hoppade<span class="arrow"></span></th>
+            <th class="sortable" data-key="avgDelay">Snittförsening<span class="arrow"></span></th>
+            <th class="sortable" data-key="worst">Värst<span class="arrow"></span></th>
           </tr>
         </thead>
         <tbody></tbody>
@@ -434,12 +434,12 @@
         <thead>
           <tr>
             <th class="sortable" data-key="line">Linje<span class="arrow"></span></th>
-            <th>Resa</th>
+            <th class="sortable" data-key="stop">Resa<span class="arrow"></span></th>
             <th class="sortable" data-key="status">Status<span class="arrow"></span></th>
             <th class="sortable" data-key="delayMin">Försening<span class="arrow"></span></th>
-            <th>Schemalagd</th>
-            <th>Faktisk</th>
-            <th>Orsak (bäst möjliga koppling)</th>
+            <th class="sortable" data-key="schedSort">Schemalagd<span class="arrow"></span></th>
+            <th class="sortable" data-key="actSort">Faktisk<span class="arrow"></span></th>
+            <th class="sortable" data-key="reason">Orsak (bäst möjliga koppling)<span class="arrow"></span></th>
             <th class="sortable" data-key="lastSeen">Senast sedd<span class="arrow"></span></th>
             <th class="sortable" data-key="polls">Pollningar<span class="arrow"></span></th>
           </tr>
@@ -466,6 +466,10 @@
 <script>
 (function () {
   var data = JSON.parse(document.getElementById('raw-data').textContent);
+  data.forEach(function (r) {
+    r.schedSort = r.schedDep || r.schedArr || '';
+    r.actSort = r.actDep || r.actArr || '';
+  });
 
   function statusClass(status) {
     if (status === 'Forsenad') return 'delayed';
@@ -519,7 +523,10 @@
     if (isCancelledLike(r)) g.cancelled++;
     if (r.delayMin) { g.delaySum += Math.max(r.delayMin, 0); g.delayN++; g.worst = Math.max(g.worst, r.delayMin); }
   });
-  var dateRows = Object.values(byDate).sort(function (a, b) { return b.date < a.date ? -1 : (b.date > a.date ? 1 : 0); });
+  var dateRows = Object.values(byDate).map(function (g) {
+    g.avgDelay = g.delayN ? g.delaySum / g.delayN : 0;
+    return g;
+  }).sort(function (a, b) { return b.date < a.date ? -1 : (b.date > a.date ? 1 : 0); });
   var maxDayCount = dateRows.reduce(function (m, g) { return Math.max(m, g.count); }, 1);
 
   var dayFilterEl = document.getElementById('dayFilter');
@@ -529,8 +536,21 @@
   var ALL = '__ALL__';
   var selectedDay = dateRows.length ? dateRows[0].date : ALL;
 
+  var historySortKey = 'date';
+  var historySortDir = -1;
+
   function renderHistoryTable() {
-    historyBody.innerHTML = dateRows.map(function (g) {
+    var sorted = dateRows.slice().sort(function (a, b) {
+      var av = a[historySortKey], bv = b[historySortKey];
+      if (av < bv) return -1 * historySortDir;
+      if (av > bv) return 1 * historySortDir;
+      return 0;
+    });
+    document.querySelectorAll('#historyTable th.sortable').forEach(function (th) {
+      var arrow = th.querySelector('.arrow');
+      arrow.textContent = th.dataset.key === historySortKey ? (historySortDir === 1 ? '▲' : '▼') : '';
+    });
+    historyBody.innerHTML = sorted.map(function (g) {
       var d = new Date(g.date.slice(0, 4), g.date.slice(4, 6) - 1, g.date.slice(6, 8));
       var wd = WEEKDAY_NAMES[(d.getDay() + 6) % 7];
       var pct = Math.round((g.count / maxDayCount) * 100);
@@ -707,6 +727,13 @@
       var key = th.dataset.key;
       if (sortKey === key) { sortDir *= -1; } else { sortKey = key; sortDir = key === 'line' ? 1 : -1; }
       fullRender();
+    });
+  });
+  document.querySelectorAll('#historyTable th.sortable').forEach(function (th) {
+    th.addEventListener('click', function () {
+      var key = th.dataset.key;
+      if (historySortKey === key) { historySortDir *= -1; } else { historySortKey = key; historySortDir = key === 'date' ? -1 : -1; }
+      renderHistoryTable();
     });
   });
 
