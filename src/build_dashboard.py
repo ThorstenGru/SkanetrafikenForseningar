@@ -160,14 +160,16 @@ def fetch_detail_rows(cur, start_date, end_date, single_date):
 
     cur.execute(
         """SELECT trip_id, trip_start_date, route_id, route_short_name, vehicle_type, trip_number,
-                  distance_km, destination_stop_name, stop_id, stop_sequence, is_final_stop,
+                  distance_km, destination_stop_name, stop_id, stop_name, stop_sequence, is_final_stop,
                   stop_schedule_relationship, arrival_delay_sec, departure_delay_sec, max_abs_delay_sec,
+                  arrival_time, departure_time, scheduled_arrival, scheduled_departure,
                   first_seen_at, last_seen_at, poll_count
            FROM delays WHERE sommarticket_valid = true AND %s""" % where,
         params,
     )
     for (trip_id, d, route_id, route_short_name, vehicle_type, trip_number, distance_km, dest,
-         stop_id, seq, is_final, stop_rel, arr_delay, dep_delay, max_abs_delay,
+         stop_id, stop_name, seq, is_final, stop_rel, arr_delay, dep_delay, max_abs_delay,
+         arr_time, dep_time, sched_arr, sched_dep,
          first_seen, last_seen, polls) in cur.fetchall():
         key = (trip_id, d)
         t = trips.get(key)
@@ -175,19 +177,25 @@ def fetch_detail_rows(cur, start_date, end_date, single_date):
             t = {
                 "trip": trip_id, "date": d.strftime("%Y%m%d"), "line": route_short_name,
                 "vehicleType": vehicle_type or "UNKNOWN", "tripNumber": trip_number, "dest": dest,
-                "distanceKm": distance_km, "route_id": route_id, "stop_ids": [],
+                "distanceKm": distance_km, "route_id": route_id, "stop_ids": [], "stops": [],
                 "final_relationship": None, "final_delay_sec": None, "max_delay_sec": None,
                 "is_cancelled": False, "firstSeen": first_seen, "lastSeen": last_seen, "polls": 0,
             }
             trips[key] = t
         t["stop_ids"].append(stop_id)
+        stop_delay_sec = dep_delay if dep_delay not in (None, 0) else arr_delay
+        t["stops"].append({
+            "seq": seq, "name": stop_name, "final": bool(is_final), "relationship": stop_rel,
+            "delayMin": round(stop_delay_sec / 60, 1) if stop_delay_sec is not None else None,
+            "schedTime": fmt_time(sched_dep or sched_arr), "actTime": fmt_time(dep_time or arr_time),
+        })
         t["polls"] += polls
         t["firstSeen"] = min(t["firstSeen"], first_seen)
         t["lastSeen"] = max(t["lastSeen"], last_seen)
         t["max_delay_sec"] = max(t["max_delay_sec"] or 0, max_abs_delay or 0)
         if is_final:
             t["final_relationship"] = stop_rel
-            t["final_delay_sec"] = dep_delay if dep_delay not in (None, 0) else arr_delay
+            t["final_delay_sec"] = stop_delay_sec
 
     cur.execute(
         """SELECT trip_id, trip_start_date, route_id, route_short_name, vehicle_type, trip_number,
@@ -201,7 +209,7 @@ def fetch_detail_rows(cur, start_date, end_date, single_date):
         trips[key] = {
             "trip": trip_id, "date": d.strftime("%Y%m%d"), "line": route_short_name,
             "vehicleType": vehicle_type or "UNKNOWN", "tripNumber": trip_number, "dest": dest,
-            "distanceKm": distance_km, "route_id": route_id, "stop_ids": [],
+            "distanceKm": distance_km, "route_id": route_id, "stop_ids": [], "stops": [],
             "final_relationship": None, "final_delay_sec": None, "max_delay_sec": None,
             "is_cancelled": True, "firstSeen": first_seen, "lastSeen": last_seen, "polls": polls,
         }
@@ -221,6 +229,7 @@ def fetch_detail_rows(cur, start_date, end_date, single_date):
             "finalDelayMin": round(t["final_delay_sec"] / 60, 1) if t["final_delay_sec"] is not None else None,
             "maxDelayMin": round(t["max_delay_sec"] / 60, 1) if t["max_delay_sec"] else None,
             "reason": reason,
+            "stops": sorted(t["stops"], key=lambda s: s["seq"] if s["seq"] is not None else 0),
             "firstSeen": t["firstSeen"].isoformat(), "lastSeen": t["lastSeen"].isoformat(), "polls": t["polls"],
         })
     return out

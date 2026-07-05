@@ -202,6 +202,38 @@
 
   .num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
+  .expand-col { width: 28px; }
+  .expand-toggle {
+    background: none;
+    border: none;
+    color: var(--ink-dim);
+    font-family: var(--mono);
+    font-size: 11px;
+    cursor: pointer;
+    padding: 2px 6px;
+    line-height: 1;
+  }
+  .expand-toggle:hover { color: var(--amber); }
+  tr.trip-row.expanded td { background: rgba(242, 169, 59, 0.04); }
+  tr.stops-row td {
+    padding: 0;
+    background: var(--panel-alt);
+  }
+  .stops-wrap { padding: 10px 14px 14px 40px; }
+  .stops-wrap table { font-size: 12.5px; }
+  .stops-wrap th {
+    text-align: left;
+    font-family: var(--display);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    padding: 4px 10px 4px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .stops-wrap td { padding: 4px 10px 4px 0; color: var(--ink-dim); border-bottom: none; }
+  .stops-wrap tr.final-stop td { color: var(--ink); font-weight: 600; }
+
   .line-badge {
     display: inline-flex;
     align-items: center;
@@ -441,6 +473,7 @@
       <table id="logTable">
         <thead>
           <tr>
+            <th class="expand-col"></th>
             <th class="sortable" data-key="date">Date<span class="arrow"></span></th>
             <th class="sortable" data-key="line">Line<span class="arrow"></span></th>
             <th class="sortable" data-key="vehicleType">Vehicle<span class="arrow"></span></th>
@@ -680,6 +713,33 @@
     return rows;
   }
 
+  var expandedTrips = new Set();  // keys: "trip|date", survives across re-renders
+
+  function tripKey(r) { return r.trip + '|' + r.date; }
+
+  function renderStopsTable(r) {
+    if (!r.stops || !r.stops.length) {
+      return '<div class="stops-wrap"><span class="reason none">No per-stop detail recorded for this trip.</span></div>';
+    }
+    var rowsHtml = r.stops.map(function (s) {
+      return (
+        '<tr class="' + (s.final ? 'final-stop' : '') + '">' +
+        '<td class="num">' + (s.seq === null || s.seq === undefined ? '–' : s.seq) + '</td>' +
+        '<td>' + (s.name || '–') + (s.final ? ' <span class="hint">(final stop)</span>' : '') + '</td>' +
+        '<td>' + (s.relationship || '–') + '</td>' +
+        '<td class="num">' + fmtDelay(s.delayMin) + '</td>' +
+        '<td class="num">' + (s.schedTime || '–') + '</td>' +
+        '<td class="num">' + (s.actTime || '–') + '</td>' +
+        '</tr>'
+      );
+    }).join('');
+    return (
+      '<div class="stops-wrap"><table><thead><tr>' +
+      '<th>Seq</th><th>Stop</th><th>Relationship</th><th>Delay</th><th>Scheduled</th><th>Actual</th>' +
+      '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div>'
+    );
+  }
+
   function renderLog(scoped) {
     var rows = applyFilters(scoped);
     var pageSize = parseInt(pageSizeEl.value, 10);
@@ -694,13 +754,17 @@
       var reasonHtml = r.reason
         ? '<span class="reason" title="' + r.reason.replace(/"/g, '&quot;') + '">' + r.reason + '</span>'
         : '<span class="reason none">unknown</span>';
-      return (
-        '<tr>' +
+      var key = tripKey(r);
+      var isOpen = expandedTrips.has(key);
+      var stopsCount = r.stops ? r.stops.length : 0;
+      var tripRow =
+        '<tr class="trip-row' + (isOpen ? ' expanded' : '') + '" data-key="' + key + '">' +
+        '<td><button class="expand-toggle" type="button" title="Show per-stop detail">' + (isOpen ? '▼' : '▶') + '</button></td>' +
         '<td class="num">' + fmtDate(r.date) + '</td>' +
         '<td><span class="line-badge">' + (r.line || '–') + '</span></td>' +
         '<td>' + (VEHICLE_LABELS[r.vehicleType] || r.vehicleType || '–') + '</td>' +
         '<td class="num">' + (r.tripNumber || '–') + '</td>' +
-        '<td>' + (r.dest || '–') + '</td>' +
+        '<td>' + (r.dest || '–') + (stopsCount ? ' <span class="hint">(' + stopsCount + ' stops recorded)</span>' : '') + '</td>' +
         '<td class="num">' + fmtKm(r.distanceKm) + '</td>' +
         '<td><span class="chip ' + cls + '">' + statusLabel(r.status) + '</span></td>' +
         '<td class="num">' + fmtDelay(r.finalDelayMin) + '</td>' +
@@ -708,9 +772,20 @@
         '<td>' + reasonHtml + '</td>' +
         '<td class="num">' + fmtSeen(r.lastSeen) + '</td>' +
         '<td class="num">' + r.polls + '</td>' +
-        '</tr>'
-      );
+        '</tr>';
+      var stopsRow = isOpen
+        ? '<tr class="stops-row" data-key="' + key + '"><td colspan="12">' + renderStopsTable(r) + '</td></tr>'
+        : '';
+      return tripRow + stopsRow;
     }).join('');
+
+    logBody.querySelectorAll('.expand-toggle').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var key = btn.closest('tr').dataset.key;
+        if (expandedTrips.has(key)) { expandedTrips.delete(key); } else { expandedTrips.add(key); }
+        renderLog(scoped);
+      });
+    });
 
     pageInfo.textContent = 'Page ' + (page + 1) + ' / ' + pages;
     document.getElementById('prevBtn').disabled = page <= 0;
