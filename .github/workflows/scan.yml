@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 concurrency:
   group: skanetrafiken-scan
@@ -38,3 +40,21 @@ jobs:
           git add data/
           git diff --cached --quiet || git commit -m "Scan: $(date -u +'%Y-%m-%d %H:%M UTC')"
           git push
+
+      - name: Build dashboard
+        run: python src/build_dashboard.py --out pages_site/index.html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: pages_site
+
+  deploy:
+    needs: scan
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
