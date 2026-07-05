@@ -92,6 +92,17 @@ def main():
 
     conn = db.connect()
     cur = conn.cursor()
+
+    # Guard against flagging dates before the scanner itself existed as
+    # "100% missing" — that's not a real coverage gap, just us not having run.
+    cur.execute("SELECT MIN(run_at) FROM scan_runs")
+    first_scan = cur.fetchone()[0]
+    if first_scan is None or target_date < first_scan.astimezone(ZoneInfo("Europe/Stockholm")).date():
+        print("Hoppar over %s: fore scannerns forsta korning (%s), ingen verklig tackningslucka." % (
+            target_date, first_scan.date() if first_scan else "okant"))
+        cur.close()
+        conn.close()
+        return
     try:
         seen = seen_trip_ids_for(cur, target_date)
         missing = [row for row in scheduled if row[0] not in seen]
