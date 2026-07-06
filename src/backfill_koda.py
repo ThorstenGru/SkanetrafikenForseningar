@@ -18,12 +18,14 @@ using that snapshot's own embedded feed.header.timestamp as "now" — not
 wall-clock time — so first_seen/last_seen/scan_runs carry true historical
 timestamps.
 
-This only approximates a real 2-hourly scan: any delay that appeared and
-fully resolved between two sampled marks is invisible, exactly like it
-would be invisible to the live scanner too (same cadence, same blind
-spot). It also reuses TODAY's static index (routes/trip metadata) for the
-whole backfilled range — acceptable because Skånetrafiken's timetable
-changes only a few times a year and 32 days is short, but if a schedule
+This only approximates a real scan at --interval-hours cadence (default
+2h, coarser than the live scanner's current 15-min polling — see
+docs/ARCHITECTURE.md): any delay that appeared and fully resolved between
+two sampled marks is invisible, the same kind of blind spot the live
+scanner has, just wider by default. It also reuses TODAY's static index
+(routes/trip metadata) for the whole backfilled range — acceptable because
+Skånetrafiken's timetable changes only a few times a year and 32 days is
+short, but if a schedule
 change fell inside the backfilled range, some trip_id lookups may miss.
 
 Usage:

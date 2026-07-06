@@ -3,7 +3,7 @@
 ## Flow, in order
 
 ```
-GitHub Actions (cron every 2h, .github/workflows/scan.yml)
+GitHub Actions (cron every 15 min, .github/workflows/scan.yml)
         │
         ▼
 src/scan.py
@@ -39,10 +39,11 @@ about weekly) and deploys the rebuilt dashboard to GitHub Pages
 
 Trafiklab's static key has a very tight quota: 60 requests/30 days. If we
 downloaded the raw GTFS zip (routes, stops, timetables for the whole region)
-on every 2-hour run, the quota would be exhausted in a bit over a week.
-Timetable data also changes rarely (a few times a year at major schedule
-changes), so a week-long cache window gives a large margin (~4 requests/
-month) without risking missing a timetable change for more than a few days.
+on every scan run — every 15 minutes, 96 times a day — the quota would be
+exhausted in under half a day. Timetable data also changes rarely (a few
+times a year at major schedule changes), so a week-long cache window gives
+a large margin (~4 requests/month) without risking missing a timetable
+change for more than a few days.
 
 The raw zip is too large (~300 MB unpacked, dominated by `stop_times.txt` at
 ~150 MB) to commit to git. We therefore run a one-off transformation: for
@@ -124,8 +125,10 @@ routine delays (ordinary traffic congestion) have no published alert though
 
 ## GitHub Actions workflows
 
-**`scan.yml`** (every 2 hours):
-- `cron: "0 */2 * * *"` — runs around the clock (UTC).
+**`scan.yml`** (every 15 minutes, raised from every 2 hours on 2026-07-06 —
+see [COMPENSATION_RULES.md](COMPENSATION_RULES.md) §11 for why):
+- `cron: "*/15 * * * *"` — runs around the clock (UTC). Uses ~19% of the
+  realtime quota (30,000 requests/30 days; 2 requests/run × 96 runs/day).
 - `workflow_dispatch` — can also be run manually (`gh workflow run scan.yml`).
 - `concurrency` with `cancel-in-progress: false` — prevents two runs from
   racing on the same static-index commit if a run takes a while.
@@ -133,10 +136,10 @@ routine delays (ordinary traffic congestion) have no published alert though
   injected as environment variables — the actual values never appear in
   code or logs.
 - The commit step only commits `data/static_index.sqlite`, and only when it
-  actually changed (weekly, not every 2h) — delay data itself lives in
+  actually changed (weekly, not every run) — delay data itself lives in
   Postgres, not git, so there's no git-history growth from it.
-- Builds the dashboard and the compensation-estimate page, and deploys both
-  to GitHub Pages every run.
+- Builds the dashboard, compensation-estimate, and claim-chains pages, and
+  deploys all three to GitHub Pages every run.
 
 **`housekeeping.yml`** (daily): runs the coverage check for yesterday, then
 deletes everything older than 45 days.
@@ -145,10 +148,18 @@ deletes everything older than 45 days.
 `src/backfill_koda.py`, see [docs/RUNBOOK.md](RUNBOOK.md#backfill-historical-data-koda).
 GTFS-RT itself has no history — this pulls past days from Trafiklab's
 separate KoDa archive product and replays them through the same
-`process_trip_updates`/`process_alerts` functions the live scanner uses,
-sampled at the same 2-hourly cadence so backfilled and live data share the
-same blind spots and shape. `timeout-minutes: 350` because KoDa builds each
-day's archive on first request, which can take up to ~60 minutes.
+`process_trip_updates`/`process_alerts` functions the live scanner uses.
+Its default `--interval-hours 2` predates the 2026-07-06 cadence change and
+was deliberately left at 2h rather than dropped to match the new 15-min
+live cadence: KoDa's per-day archive is downloaded once regardless of
+interval, so a finer interval only means picking (and locally processing)
+many more snapshots out of an already-downloaded day — 8x more work per
+backfilled day for a one-off historical approximation, against the
+350-minute job timeout. Net effect: backfilled days have a coarser
+(2-hourly) blind spot than freshly-scanned days now do (15-min) — pass
+`--interval-hours` explicitly on a backfill run if closer parity matters
+more than run time. `timeout-minutes: 350` because KoDa builds each day's
+archive on first request, which can take up to ~60 minutes.
 
 ## Dashboard (`src/build_dashboard.py`)
 

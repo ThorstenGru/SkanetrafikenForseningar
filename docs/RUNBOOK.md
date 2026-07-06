@@ -73,11 +73,13 @@ The live scanner only sees delays from the moment it starts polling — GTFS-RT
 itself is a live feed with no history. To fill in the past, Trafiklab's
 [KoDa](https://www.trafiklab.se/api/our-apis/koda/) archive stores daily
 snapshots of TripUpdates/ServiceAlerts going back years. `src/backfill_koda.py`
-downloads each requested day, picks the snapshot closest to each of our normal
-2-hourly poll marks, and runs it through the exact same processing pipeline
-as a live scan, using that snapshot's own embedded timestamp (not wall-clock
-time) — so backfilled rows are indistinguishable from ones the live scanner
-would have written, just after the fact.
+downloads each requested day, picks the snapshot closest to each of a chosen
+set of poll marks (`--interval-hours`, default 2 — coarser than the live
+scanner's current 15-min cadence, see caveat below), and runs it through the
+exact same processing pipeline as a live scan, using that snapshot's own
+embedded timestamp (not wall-clock time) — so backfilled rows are
+indistinguishable from ones the live scanner would have written, just after
+the fact.
 
 Requires its own API key — KoDa is a separate Trafiklab product from GTFS
 Regional Static/Realtime:
@@ -102,9 +104,14 @@ python src/backfill_koda.py --start 2026-06-01 --end 2026-06-30
 Caveats:
 - KoDa builds each day's archive on first request — this can take anywhere
   from a few seconds up to ~60 minutes per day, hence the long CI timeout.
-- Sampling every 2 hours means a delay that appears and fully resolves
-  between two marks is invisible — exactly the same blind spot the live
-  scanner has, so backfilled and live data stay consistent with each other.
+- Sampling every `--interval-hours` (default 2h) means a delay that appears
+  and fully resolves between two marks is invisible — the same kind of
+  blind spot the live scanner has, just wider by default now that the live
+  scanner polls every 15 min instead of every 2h (kept at 2h here since a
+  finer interval means re-processing many more snapshots per already-
+  downloaded day — see ARCHITECTURE.md). Pass a smaller `--interval-hours`
+  on a backfill run for closer parity with live data, at the cost of a
+  longer run.
 - Reuses today's static index (routes/trip metadata) for the whole
   backfilled range. Fine in practice since Skånetrafiken's timetable
   changes only a few times a year, but a schedule change inside the

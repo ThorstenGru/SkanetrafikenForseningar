@@ -4,7 +4,7 @@
 
 Continuous scanner that collects delays, cancelled trips, and service alerts
 for the whole Skånetrafiken network, via Trafiklab's open GTFS Regional data.
-Runs automatically every 2 hours via GitHub Actions and builds up a history
+Runs automatically every 15 minutes via GitHub Actions and builds up a history
 in Postgres (Supabase) — intended as evidence for compensation claims,
 complaints to Skånetrafiken about recurring problems, and personal stats.
 
@@ -55,10 +55,14 @@ Pages.
    stops, each trip's destination, and calendar rules (which days a trip
    actually runs). Rebuilt about once a week to conserve the tight static
    quota (60 requests/30 days).
-2. **Realtime data** is fetched every 2 hours (`TripUpdates.pb` +
+2. **Realtime data** is fetched every 15 minutes (`TripUpdates.pb` +
    `ServiceAlerts.pb`) and written batched to **Postgres** (Supabase, its
    own dedicated project — see [docs/RUNBOOK.md](docs/RUNBOOK.md)), with
-   deduplication per (trip, date, stop order).
+   deduplication per (trip, date, stop order). Chosen to minimize the
+   chance of a short trip starting and finishing entirely between two polls
+   (see "Known limitations" below) — well within the realtime quota
+   (30,000 requests/30 days; 2 requests every 15 min ≈ 5,760/30 days, ~19%
+   of budget).
 3. **Coverage check** — once a day, compares which trips actually showed up
    in the realtime feed against the timetable. ⚠️ Known limitation: only
    ~5% of scheduled trips ever appear in Skånetrafiken's realtime feed at
@@ -97,7 +101,7 @@ individual delay) lives in a separate, non-public Postgres database.
 
 | Script | Purpose |
 |---|---|
-| `src/scan.py` | Runs a scan (refreshes the static index if needed + realtime data → Postgres). Runs automatically every 2 hours. |
+| `src/scan.py` | Runs a scan (refreshes the static index if needed + realtime data → Postgres). Runs automatically every 15 minutes. |
 | `src/coverage_check.py` | Compares a finished day's timetable against what actually showed up in the feed. Runs automatically daily. |
 | `src/housekeeping.py` | Deletes data older than 45 days. Runs automatically daily. |
 | `src/build_dashboard.py` | Builds the standalone HTML dashboard. Runs automatically on every scan. |
@@ -119,9 +123,10 @@ individual delay) lives in a separate, non-public Postgres database.
   [docs/COMPENSATION_RULES.md](docs/COMPENSATION_RULES.md) for caveats
   (e.g. no documented voucher bonus for car reimbursement, cancelled trips
   are listed but not scored).
-- Polling happens every 2 hours — short delays that occur and resolve
-  within that window can be missed or underestimated. The quota (30,000
-  requests/30 days) allows much more frequent polling if that becomes
-  worthwhile.
+- Polling happens every 15 minutes (raised from every 2 hours on 2026-07-06,
+  see COMPENSATION_RULES.md §11) — a trip whose entire live-tracking window
+  falls between two polls is still theoretically possible but now a 15-min
+  gap instead of a 2-hour one. Still ~19% of the realtime quota, so this
+  could be tightened further if it turns out to still miss things.
 - Only ~5% of scheduled trips ever appear in the realtime feed at all — see
   the coverage-check caveat above.

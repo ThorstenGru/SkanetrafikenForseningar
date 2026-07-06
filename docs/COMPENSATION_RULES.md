@@ -292,3 +292,54 @@ get from Ystad to Simrishamn?"
   across devices later, the natural next step is a Supabase table written
   via a scoped anon key + RLS policy (the project already uses Supabase),
   not a change to how the page itself is built.
+
+## 11. Coverage: what fraction of delays does this system actually catch?
+
+Asked directly by the user 2026-07-06: "did we catch all delays… how is
+the gap between planning and reality done in the app?" Answered in full,
+since missing a real trip means missing a real compensation opportunity.
+
+**How planned-vs-actual is tracked today:**
+1. **Planned** — the full timetable lives in `static_index.sqlite`
+   (`trip_meta` + `calendar` + `calendar_dates`), rebuilt weekly. Every
+   trip Skånetrafiken schedules for a given day can be listed from this
+   alone, with no realtime data involved.
+2. **Actual** — `TripUpdates.pb`, fetched on every scan, reports live
+   delay/status for whichever vehicles happen to be reporting at that
+   moment. `seen_trips` logs every `trip_id` that appeared in any poll
+   that day (delayed or not) — the "we got some reality data for this one"
+   signal.
+3. **The gap** — `coverage_check.py` compares scheduled vs. seen per
+   *line*, once daily, and flags a line-day only when its visibility rate
+   drops well below **that line's own historical baseline** (see
+   ARCHITECTURE.md). It deliberately does not flag "scheduled minus seen"
+   directly, because of the finding below.
+
+**Two distinct causes of missing data, only one of them fixable here:**
+- **Not fixable from this side:** only ~5% of ALL scheduled trips ever
+  appear in `TripUpdates.pb` at all, on any day, including days scanned
+  continuously (verified empirically 2026-07-05). Skånetrafiken's realtime
+  feed apparently only reports live predictions for a subset of
+  GPS/AVL-tracked vehicles — the other ~95% of scheduled service has *no*
+  realtime data available anywhere, from any polling frequency. If a rider
+  was on one of those trips and it ran badly late, this system has no way
+  to know — Skånetrafiken's own feed never said so. That rider's only
+  option is a manual claim from personal memory of the journey; nothing
+  here can surface or quantify it.
+- **Fixable, and fixed today:** for the ~5% of trips that *are*
+  realtime-tracked, a short trip whose entire live-tracking window falls
+  strictly between two polls could be missed even though the data existed
+  somewhere on Trafiklab's servers at the time. This was a real gap at the
+  original 2-hour polling cadence. The realtime quota (30,000 requests/30
+  days) was barely touched at that cadence (2 requests × 12 scans/day ≈
+  2.4% of budget) — plenty of headroom to poll far more often. **Scan
+  cadence raised from every 2 hours to every 15 minutes on 2026-07-06**
+  (`.github/workflows/scan.yml`), now ~19% of the realtime quota. This
+  doesn't create new data Skånetrafiken didn't already have, but it
+  greatly narrows the window in which already-available data could be
+  polled past without ever being captured.
+- Net effect: this system now catches essentially everything Skånetrafiken
+  itself makes visible in realtime, for the fraction of the network their
+  feed actually tracks. It cannot see delays for trips their feed never
+  reports on at all — that's an external, structural limit, not a scanner
+  gap.

@@ -86,9 +86,7 @@ def enrich_with_endpoints(rows, stops, trip_endpoints):
             if s.get("final"):
                 dest_stop_entry = s
 
-        out.append(dict(
-            (k, v) for k, v in r.items() if k != "stops"
-        ))
+        out.append(dict(r))
         out[-1].update({
             "originStopId": origin_id,
             "originName": origin_meta.get("name"),

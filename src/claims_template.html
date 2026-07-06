@@ -329,6 +329,46 @@
   }
   .chain-score strong { color: var(--ink-dim); }
 
+  .expand-toggle {
+    background: none;
+    border: none;
+    color: var(--ink-dim);
+    font-family: var(--mono);
+    font-size: 11px;
+    cursor: pointer;
+    padding: 2px 6px;
+    line-height: 1;
+  }
+  .expand-toggle:hover { color: var(--amber); }
+
+  .stops-panel {
+    flex-basis: 100%;
+    width: 100%;
+    margin-top: 4px;
+    padding: 8px 10px;
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    font-size: 11.5px;
+  }
+  .stops-panel table { width: 100%; border-collapse: collapse; }
+  .stops-panel th {
+    text-align: left;
+    font-family: var(--display);
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    padding: 3px 8px 3px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .stops-panel td { padding: 3px 8px 3px 0; color: var(--ink-dim); border-bottom: none; }
+  .stops-panel tr.final-stop td { color: var(--ink); font-weight: 600; }
+  .stops-panel tr.delay-start td { background: rgba(209, 69, 58, 0.08); }
+  .delay-flag { color: var(--red); font-weight: 600; font-size: 11px; }
+  .stop-delay.mild { color: var(--amber-bright); }
+  .stop-delay.severe { color: var(--red); font-weight: 600; }
+
   .gap-warning {
     background: var(--red-dim);
     border: 1px solid #f3c9c2;
@@ -420,12 +460,21 @@
     </dl>
   </section>
 
+  <section>
+    <div class="section-head">
+      <h2>Your possible claim list</h2>
+      <span class="hint">Recomputed live from the checkboxes below — this is what an investigator would actually see. Mark "Claim started" and record Skånetrafiken's claim number once you file.</span>
+    </div>
+    <div class="stats" id="myClaimsStats"></div>
+    <div id="myClaimsDays"></div>
+  </section>
+
   <section class="stats" id="statStrip"></section>
 
   <section>
     <div class="section-head">
       <h2>Suggested reasonable chains</h2>
-      <span class="hint">Network-wide, illustrative — grouped by day into the longest sequences where one trip's destination is the next trip's origin. Days and chains are ranked by reasonability (chain length) then possible max amount. Tick the legs that were actually yours.</span>
+      <span class="hint">Network-wide, illustrative — grouped by day into the longest sequences where one trip's destination is the next trip's origin. Days and chains are ranked by reasonability (chain length) then possible max amount. Tick the legs that were actually yours — expand a leg (▶) to see its stop-by-stop delay.</span>
     </div>
     <div class="controls">
       <label for="dayFilter">Day</label>
@@ -434,15 +483,6 @@
       <button class="link-btn" id="clearBtn">Clear all</button>
     </div>
     <div id="chainDays"></div>
-  </section>
-
-  <section>
-    <div class="section-head">
-      <h2>Your claim list</h2>
-      <span class="hint">Recomputed live from the checkboxes above — this is what an investigator would actually see. Mark "Claim started" and record Skånetrafiken's claim number once you file — saved in this browser only (not synced elsewhere).</span>
-    </div>
-    <div class="stats" id="myClaimsStats"></div>
-    <div id="myClaimsDays"></div>
   </section>
 
   <footer>
@@ -567,6 +607,48 @@
     return chains;
   }
 
+  var expandedLegs = new Set();  // keys "trip|date", survives re-renders
+
+  function stopDelayClass(m) {
+    if (m === null || m === undefined) return '';
+    if (m >= 5) return 'severe';
+    if (m > 0.5) return 'mild';
+    return '';
+  }
+
+  // Shows every recorded stop for this trip, signaling exactly where a
+  // delay first became noticeable (not just the final-stop number) and how
+  // it grew or shrank from there.
+  function renderStopsPanel(r) {
+    if (!r.stops || !r.stops.length) {
+      return '<div class="stops-panel"><span class="hint">No per-stop detail recorded for this trip.</span></div>';
+    }
+    var delayStartSeq = null;
+    for (var i = 0; i < r.stops.length; i++) {
+      var m = r.stops[i].delayMin;
+      if (m !== null && m !== undefined && m > 1 && delayStartSeq === null) { delayStartSeq = r.stops[i].seq; }
+    }
+    var rowsHtml = r.stops.map(function (s) {
+      var isStart = delayStartSeq !== null && s.seq === delayStartSeq;
+      var delayText = (s.delayMin === null || s.delayMin === undefined)
+        ? '–'
+        : (s.delayMin > 0 ? '+' : '') + s.delayMin.toFixed(1) + ' min';
+      return '<tr class="' + (s.final ? 'final-stop' : '') + (isStart ? ' delay-start' : '') + '">' +
+        '<td class="num">' + (s.seq === null || s.seq === undefined ? '–' : s.seq) + '</td>' +
+        '<td>' + esc(s.name || '–') +
+          (s.final ? ' <span class="hint">(final stop)</span>' : '') +
+          (isStart ? ' <span class="delay-flag">⚡ delay begins here</span>' : '') +
+        '</td>' +
+        '<td class="num">' + esc(s.schedTime || '–') + '</td>' +
+        '<td class="num">' + esc(s.actTime || '–') + '</td>' +
+        '<td class="num stop-delay ' + stopDelayClass(s.delayMin) + '">' + delayText + '</td>' +
+        '</tr>';
+    }).join('');
+    return '<div class="stops-panel"><table><thead><tr>' +
+      '<th>Seq</th><th>Stop</th><th>Sched</th><th>Actual</th><th>Delay</th>' +
+      '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div>';
+  }
+
   function legHtml(r, opts) {
     opts = opts || {};
     var key = rowKey(r);
@@ -597,7 +679,10 @@
         '<input type="text" class="claim-number-input" data-key="' + esc(key) + '" placeholder="Skånetrafiken claim #" value="' + esc(t.claimNumber) + '">' +
         '</span>';
     }
-    return '<div class="chain-leg">' + selectHtml + trackHtml + '</div>';
+    var isOpen = expandedLegs.has(key);
+    var toggleHtml = '<button type="button" class="expand-toggle" data-key="' + esc(key) + '" title="Show per-stop detail">' + (isOpen ? '▼' : '▶') + '</button>';
+    var stopsPanel = isOpen ? renderStopsPanel(r) : '';
+    return '<div class="chain-leg">' + toggleHtml + selectHtml + trackHtml + stopsPanel + '</div>';
   }
 
   function chainHtml(chain, opts) {
@@ -780,6 +865,14 @@
     tracking[key] = tracking[key] || { claimed: false, claimNumber: '' };
     tracking[key].claimNumber = e.target.value;
     saveTracking();
+  });
+
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('.expand-toggle');
+    if (!btn) return;
+    var key = btn.dataset.key;
+    if (expandedLegs.has(key)) expandedLegs.delete(key); else expandedLegs.add(key);
+    renderAll();
   });
 
   document.getElementById('selectSuggestedBtn').addEventListener('click', function () {
