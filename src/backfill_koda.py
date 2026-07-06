@@ -53,7 +53,12 @@ import static_index
 
 KODA_BASE = "https://api.koda.trafiklab.se/KoDa/api/v2"
 POLL_INTERVAL_SEC = 30
-MAX_POLL_MINUTES = 60
+# KoDa builds each day's archive on first request. Observed once at ~37 min
+# for a cold day; docs say up to ~60. Bounded lower here (not to the full
+# 60) so one slow-to-build day can't eat the whole CI job's time budget —
+# a day that times out is skipped (see fetch_day_snapshots callers) and can
+# be re-requested in a follow-up run, which just re-upserts it.
+MAX_POLL_MINUTES = 25
 
 
 def _koda_url(feed, day):
@@ -130,10 +135,18 @@ def _target_marks_utc(day, interval_hours):
     return marks
 
 
+def _fetch_or_skip(feed, day):
+    try:
+        return fetch_day_snapshots(feed, day)
+    except Exception as exc:
+        print("  WARNING: %s %s unavailable, skipping this feed for this day: %s" % (feed, day, exc), file=sys.stderr)
+        return []
+
+
 def backfill_day(day, interval_hours, trip_meta, stops, cur):
     print("Fetching KoDa archives for %s..." % day)
-    tu_snapshots = fetch_day_snapshots("TripUpdates", day)
-    alert_snapshots = fetch_day_snapshots("ServiceAlerts", day)
+    tu_snapshots = _fetch_or_skip("TripUpdates", day)
+    alert_snapshots = _fetch_or_skip("ServiceAlerts", day)
     print("  %d TripUpdates snapshot(s), %d ServiceAlerts snapshot(s) stored for %s" % (
         len(tu_snapshots), len(alert_snapshots), day))
     if not tu_snapshots and not alert_snapshots:
