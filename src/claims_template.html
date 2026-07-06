@@ -369,6 +369,9 @@
   .stop-delay.mild { color: var(--amber-bright); }
   .stop-delay.severe { color: var(--red); font-weight: 600; }
 
+  #trackingStatus.ok { color: var(--green); }
+  #trackingStatus.err { color: var(--red); font-weight: 600; }
+
   .gap-warning {
     background: var(--red-dim);
     border: 1px solid #f3c9c2;
@@ -463,7 +466,7 @@
   <section>
     <div class="section-head">
       <h2>Your possible claim list</h2>
-      <span class="hint">Recomputed live from the checkboxes below — this is what an investigator would actually see. Mark "Claim started" and record Skånetrafiken's claim number once you file.</span>
+      <span class="hint">Recomputed live from the checkboxes below — this is what an investigator would actually see. Mark "Claim started" and record Skånetrafiken's claim number once you file — <span id="trackingStatus">loading saved tracking…</span></span>
     </div>
     <div class="stats" id="myClaimsStats"></div>
     <div id="myClaimsDays"></div>
@@ -536,18 +539,81 @@
     return 'tier50';
   }
   function rowKey(r) { return r.trip + '|' + r.date; }
+  function isoDate(yyyymmdd) { return fmtDate(yyyymmdd); }
 
-  // Claim tracking (claim-started + Skånetrafiken claim number) is personal
-  // record-keeping with no server to write to on a static GitHub Pages
-  // site — persisted in this browser's localStorage only, keyed by trip.
-  // Lost if browser storage is cleared, and not synced across devices.
-  var TRACKING_KEY = 'skaneClaimsTracking_v1';
+  // Claim tracking (claim-started + Skånetrafiken claim number) lives in
+  // Postgres (Supabase's claim_tracking table, see
+  // docs/COMPENSATION_RULES.md §12) — written directly from the browser via
+  // Supabase's REST API (PostgREST) using the public anon key embedded at
+  // build time. Reads are open to anyone; writes require a passphrase sent
+  // as a header, also embedded at build time — not real security, just a
+  // deterrent against casual/accidental writes (see the migration SQL for
+  // the full reasoning). `tracking` is an in-memory cache keyed by
+  // "trip|date", refreshed from Supabase on load and updated optimistically
+  // on every change.
+  var SB = payload.supabase || {};
+  var TRACKING_URL = SB.url ? SB.url + '/rest/v1/claim_tracking' : null;
   var tracking = {};
-  try { tracking = JSON.parse(localStorage.getItem(TRACKING_KEY) || '{}'); } catch (e) { tracking = {}; }
-  function saveTracking() {
-    try { localStorage.setItem(TRACKING_KEY, JSON.stringify(tracking)); } catch (e) { /* storage unavailable — tracking just won't persist */ }
+  var statusEl = document.getElementById('trackingStatus');
+
+  function setStatus(text, cls) {
+    if (!statusEl) return;
+    statusEl.textContent = text;
+    statusEl.className = cls || '';
   }
+
+  function sbHeaders(forWrite) {
+    var h = { 'apikey': SB.anonKey, 'Authorization': 'Bearer ' + SB.anonKey, 'Content-Type': 'application/json' };
+    if (forWrite) h['x-claim-passphrase'] = SB.writePassphrase;
+    return h;
+  }
+
   function trackingFor(key) { return tracking[key] || { claimed: false, claimNumber: '' }; }
+
+  function loadTracking() {
+    if (!TRACKING_URL) { setStatus('Supabase not configured for this build', 'err'); return Promise.resolve(); }
+    return fetch(TRACKING_URL + '?select=trip_id,trip_start_date,claimed,claim_number', { headers: sbHeaders(false) })
+      .then(function (resp) {
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        return resp.json();
+      })
+      .then(function (dbRows) {
+        dbRows.forEach(function (row) {
+          var key = row.trip_id + '|' + row.trip_start_date.replace(/-/g, '');
+          tracking[key] = { claimed: row.claimed, claimNumber: row.claim_number || '' };
+        });
+        setStatus('synced with Supabase', 'ok');
+      })
+      .catch(function (err) {
+        setStatus('⚠ could not load saved tracking (' + err.message + ') — changes below won’t be saved', 'err');
+      });
+  }
+
+  // Optimistic: updates the in-memory cache immediately (so the UI reflects
+  // it right away) and fires the write in the background. A failure is
+  // surfaced via the status line but doesn't roll back the checkbox/text —
+  // this is personal record-keeping, not a transactional system.
+  function saveTrackingRow(r, patch) {
+    var key = rowKey(r);
+    tracking[key] = Object.assign({ claimed: false, claimNumber: '' }, trackingFor(key), patch);
+    if (!TRACKING_URL) { setStatus('Supabase not configured for this build', 'err'); return; }
+    setStatus('saving…', '');
+    fetch(TRACKING_URL, {
+      method: 'POST',
+      headers: Object.assign(sbHeaders(true), { 'Prefer': 'resolution=merge-duplicates' }),
+      body: JSON.stringify([{
+        trip_id: r.trip,
+        trip_start_date: isoDate(r.date),
+        claimed: tracking[key].claimed,
+        claim_number: tracking[key].claimNumber,
+      }]),
+    }).then(function (resp) {
+      if (!resp.ok) return resp.text().then(function (t) { throw new Error('HTTP ' + resp.status + ': ' + t); });
+      setStatus('synced with Supabase', 'ok');
+    }).catch(function (err) {
+      setStatus('⚠ save failed (' + err.message + ') — try again', 'err');
+    });
+  }
 
   // "Reasonability" = chain length (a longer connected chain is a stronger,
   // more concrete travel story than a lone leg). Ties broken by the
@@ -703,6 +769,9 @@
       esc(nextFirst.originName || '?') + '</strong> (' + fmtTime(nextFirst.originTimeIso) + ')?</div>';
   }
 
+  var rowsByKey = {};
+  allRows.forEach(function (r) { rowsByKey[rowKey(r)] = r; });
+
   var eligible = allRows.filter(function (r) { return r.calc === 'eligible'; });
   var cancelled = allRows.filter(function (r) { return r.calc === 'cancelled'; });
 
@@ -851,20 +920,22 @@
     }
     if (e.target.classList.contains('claimed-check')) {
       var ck = e.target.dataset.key;
-      tracking[ck] = tracking[ck] || { claimed: false, claimNumber: '' };
-      tracking[ck].claimed = e.target.checked;
-      saveTracking();
+      saveTrackingRow(rowsByKey[ck], { claimed: e.target.checked });
       renderMyClaims();
     }
   });
-  // Plain 'input' (not 'change'/full re-render) so typing a claim number
-  // doesn't rebuild the DOM under the user's cursor on every keystroke.
+  // Plain 'input' (not 'change'/full re-render), debounced, so typing a
+  // claim number doesn't rebuild the DOM under the user's cursor or fire a
+  // network request on every keystroke.
+  var claimNumberTimers = {};
   document.addEventListener('input', function (e) {
     if (!e.target.classList.contains('claim-number-input')) return;
     var key = e.target.dataset.key;
-    tracking[key] = tracking[key] || { claimed: false, claimNumber: '' };
-    tracking[key].claimNumber = e.target.value;
-    saveTracking();
+    var value = e.target.value;
+    clearTimeout(claimNumberTimers[key]);
+    claimNumberTimers[key] = setTimeout(function () {
+      saveTrackingRow(rowsByKey[key], { claimNumber: value });
+    }, 600);
   });
 
   document.addEventListener('click', function (e) {
@@ -887,6 +958,7 @@
   dayFilterEl.addEventListener('change', renderChainDays);
 
   renderAll();
+  loadTracking().then(renderMyClaims);
 })();
 </script>
 </body>

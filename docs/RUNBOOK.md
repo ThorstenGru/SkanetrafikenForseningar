@@ -119,6 +119,34 @@ Caveats:
 - Safe to re-run: all writes go through the same `ON CONFLICT` upserts as a
   live scan, so re-backfilling a day just updates it, never duplicates it.
 
+## Applying migrations
+
+`schema.sql` is the original baseline (applied once, by hand, when the
+project started). Anything after that lives in `src/migrations/`, numbered
+in application order, and is applied via `src/apply_migration.py` — a
+small generic runner that substitutes `${ENV_VAR_NAME}` placeholders in the
+SQL with real environment variables first, so a migration can reference a
+secret (e.g. a passphrase baked into an RLS policy) without that secret
+ever being committed to the file itself.
+
+**Via GitHub Actions (recommended — has access to `DATABASE_URL` and any
+other repo secret the migration needs):**
+```bash
+gh workflow run migrate.yml -R ThorstenGru/SkanetrafikenForseningar -f file=src/migrations/001_claim_tracking.sql
+```
+
+**Locally**, if you have `DATABASE_URL` (and whatever secrets the specific
+migration substitutes) in your environment:
+```bash
+export DATABASE_URL=...
+export CLAIM_TRACKING_PASSPHRASE=...   # only needed for 001_claim_tracking.sql specifically
+python src/apply_migration.py src/migrations/001_claim_tracking.sql
+```
+
+Migrations are written to be safe to re-run (`CREATE TABLE IF NOT EXISTS`,
+`DROP POLICY IF EXISTS` before `CREATE POLICY`), so re-applying one after a
+passphrase rotation or a policy tweak just updates it in place.
+
 ## Inspect the database directly
 
 ```bash

@@ -134,6 +134,21 @@ One log row per daily housekeeping run.
 | `*_deleted` | Row counts deleted per table. |
 | `error` | Error text if any. |
 
+### `claim_tracking`
+
+Added 2026-07-06 (`src/migrations/001_claim_tracking.sql`) — not touched
+by scan.py at all. Written directly from the browser by claims.html's own
+JS via Supabase's REST API, not from any Python script. See
+[COMPENSATION_RULES.md](COMPENSATION_RULES.md) §12 for the full design,
+including the RLS/passphrase model that gates writes.
+
+| Column | Description |
+|---|---|
+| `trip_id`, `trip_start_date` | Same identity as `delays`/`trip_cancellations` — PK together. |
+| `claimed` | Boolean — "Claim started" checkbox on claims.html. |
+| `claim_number` | Free text — Skånetrafiken's own claim reference once filed. |
+| `updated_at` | Set by the table default; not currently read back anywhere. |
+
 ## `data/static_index.sqlite` (local file, committed to git)
 
 Rebuilt by `src/static_index.py`, at most once a week.

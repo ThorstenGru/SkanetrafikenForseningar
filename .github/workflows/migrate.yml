@@ -1,0 +1,30 @@
+name: Apply database migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      file:
+        description: "Path to the migration SQL file, e.g. src/migrations/001_claim_tracking.sql"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Apply migration
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          CLAIM_TRACKING_PASSPHRASE: ${{ secrets.CLAIM_TRACKING_PASSPHRASE }}
+        run: python src/apply_migration.py "${{ github.event.inputs.file }}"

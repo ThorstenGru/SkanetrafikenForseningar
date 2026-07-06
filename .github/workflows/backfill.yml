@@ -61,6 +61,8 @@ jobs:
       - name: Build reasonable claim chains page
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          CLAIM_TRACKING_PASSPHRASE: ${{ secrets.CLAIM_TRACKING_PASSPHRASE }}
         run: python src/build_claims.py --out pages_site/claims.html
 
       - uses: actions/upload-pages-artifact@v3

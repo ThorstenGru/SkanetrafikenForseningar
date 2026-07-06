@@ -65,6 +65,32 @@ def koda_key():
     return get_key("KODA_API_KEY")
 
 
+# Supabase project serving this data — used only by build_claims.py to let
+# the built claims.html write directly to Postgres via Supabase's REST API
+# (PostgREST), bypassing the need for any server this static site doesn't
+# have. The project ref itself isn't sensitive (same one documented in
+# project memory/RUNBOOK.md); SUPABASE_ANON_KEY and
+# CLAIM_TRACKING_PASSPHRASE are secrets read at build time and embedded
+# into the built page — see docs/COMPENSATION_RULES.md §12 for why that's
+# an accepted trade-off for this table specifically.
+#
+# Deliberately soft (returns None, doesn't raise like get_key()) since
+# these two are only needed for one optional feature on one of three
+# pages — until SUPABASE_ANON_KEY exists as a GH secret (set once the
+# claim_tracking migration has been applied), every other page must still
+# build and deploy normally. claims.html's own JS degrades gracefully when
+# these come through as null (see claims_template.html).
+def supabase_anon_key():
+    return os.environ.get("SUPABASE_ANON_KEY")
+
+
+def claim_tracking_passphrase():
+    return os.environ.get("CLAIM_TRACKING_PASSPHRASE")
+
+
+SUPABASE_URL = "https://fwwtrtgefdltfazwcrwa.supabase.co"
+
+
 # GTFS-RT Alert.Cause / Alert.Effect enum labels (protobuf spec)
 CAUSE_LABELS = {
     1: "UNKNOWN_CAUSE",

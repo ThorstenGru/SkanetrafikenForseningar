@@ -284,14 +284,12 @@ get from Ystad to Simrishamn?"
   the display would make "how did you get from X to Y" reference the wrong
   pair of places).
 - **Claim tracking** (a "Claim started" checkbox + free-text field for
-  Skånetrafiken's own claim number once filed) lives only in "Your claim
-  list", persisted to the browser's `localStorage` keyed by trip — there is
-  no server for a static GitHub Pages site to write to, so this is
-  single-browser, single-device record-keeping, not synced anywhere and
-  lost if that browser's storage is cleared. If this needs to be durable
-  across devices later, the natural next step is a Supabase table written
-  via a scoped anon key + RLS policy (the project already uses Supabase),
-  not a change to how the page itself is built.
+  Skånetrafiken's own claim number once filed) lives in "Your possible
+  claim list". Originally shipped as browser `localStorage`
+  (single-device, private) on 2026-07-06; moved to a Supabase table the
+  same day at the user's request ("all data should stay in the database")
+  — see §12 for the full design of that move, including the security
+  trade-off it required.
 
 ## 11. Coverage: what fraction of delays does this system actually catch?
 
@@ -343,3 +341,63 @@ since missing a real trip means missing a real compensation opportunity.
   feed actually tracks. It cannot see delays for trips their feed never
   reports on at all — that's an external, structural limit, not a scanner
   gap.
+
+## 12. Claim tracking moved from localStorage to Supabase
+
+Requested by the user 2026-07-06 ("all data should stay in the database,
+all in Supabase") — claims.html's "Claim started" checkbox + claim-number
+field, originally per-browser `localStorage`, now writes to a new
+`claim_tracking` table (`src/migrations/001_claim_tracking.sql`) directly
+from the browser via Supabase's PostgREST REST API, using the project's
+public anon key embedded into the built page at compile time (by
+`build_claims.py`, from the `SUPABASE_ANON_KEY` GitHub secret — never
+committed to git).
+
+**The core problem this raises:** a static GitHub Pages site has no server
+of its own, so *some* credential allowing writes has to live inside the
+page's own shipped JavaScript, visible to anyone who opens dev tools on
+the live site. This is normal and expected for Supabase's anon key
+specifically (it's designed to be public; access control is meant to come
+from Row Level Security, not key secrecy) — but RLS still has to decide
+who's allowed to write, and there is no login system here to check against
+for a single-user personal tool.
+
+**Options discussed with the user, and the choice made:**
+1. Fully open anon read/write RLS — simplest, no real access control
+   beyond "you found the table exists."
+2. **Chosen: a shared write passphrase**, sent as a custom
+   `x-claim-passphrase` header and checked inside the RLS policy via
+   PostgREST's `current_setting('request.headers', true)` mechanism. This
+   is explicitly **not real security** — the passphrase ships inside
+   claims.html's own JS, exactly as visible as the anon key to anyone who
+   inspects the page. Its only effect is raising the bar above a casual
+   visitor or bot trivially POSTing to the table without first looking at
+   the page source. Reads stay fully open (no sensitive content in this
+   table beyond a self-chosen claim number; the rest of the site is
+   already public network-wide data).
+3. Full Supabase Auth (magic link / OTP login) — the only way to get an
+   actual access-controlled write. Rejected as overkill for tracking one
+   person's own claim numbers on a hobby project; would add a real sign-in
+   flow to what's otherwise a fully static, login-free set of pages.
+4. Keep localStorage — rejected per the user's explicit ask for
+   database-backed storage.
+
+**How the passphrase itself stays out of the public repo:** generated
+once with Python's `secrets.token_urlsafe`, stored only as the
+`CLAIM_TRACKING_PASSPHRASE` GitHub Actions secret, and substituted into
+`src/migrations/001_claim_tracking.sql`'s RLS policy at apply-time by
+`src/apply_migration.py` (see docs/RUNBOOK.md#applying-migrations) — the
+committed `.sql` file only ever contains the `${CLAIM_TRACKING_PASSPHRASE}`
+placeholder, never the real value. The same secret is passed to
+`build_claims.py` at build time to embed into the shipped page, which is
+the one place it's *meant* to become visible.
+
+**Client behavior:** `claims_template.html` loads existing tracking rows
+on page load (open read, no passphrase needed), and writes optimistically
+— the checkbox/text field updates immediately in the UI, with the actual
+Supabase write happening in the background (immediately for the checkbox,
+debounced ~600ms for the free-text claim-number field so typing doesn't
+fire a request per keystroke). A small status line next to the section
+heading reports "synced with Supabase" or a visible error if a read/write
+fails — failures don't roll back the UI, since this is personal
+record-keeping, not a transactional system.

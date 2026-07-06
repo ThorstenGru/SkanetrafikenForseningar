@@ -109,6 +109,7 @@ individual delay) lives in a separate, non-public Postgres database.
 | `src/build_claims.py` | Builds the reasonable-claim-chains page (`claims.html`). Runs automatically on every scan. |
 | `src/static_index.py` | Can be run standalone to force a static-index refresh. |
 | `src/backfill_koda.py` | One-off backfill of past days from Trafiklab's KoDa historical archive. Manually triggered (`backfill.yml`), see [docs/RUNBOOK.md](docs/RUNBOOK.md#backfill-historical-data-koda). |
+| `src/apply_migration.py` | Applies a `src/migrations/*.sql` file against Postgres. Manually triggered (`migrate.yml`), see [docs/RUNBOOK.md](docs/RUNBOOK.md#applying-migrations). |
 
 ## Known limitations / future ideas
 

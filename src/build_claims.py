@@ -136,6 +136,11 @@ def main():
                 "minDelayMin": config.MIN_DELAY_FOR_COMPENSATION_MIN,
                 "connectRadiusM": config.CLAIM_CHAIN_CONNECT_RADIUS_M,
             },
+            "supabase": {
+                "url": config.SUPABASE_URL,
+                "anonKey": config.supabase_anon_key(),
+                "writePassphrase": config.claim_tracking_passphrase(),
+            },
         },
         ensure_ascii=False, separators=(",", ":"),
     ).replace("</script", "<\\/script")
