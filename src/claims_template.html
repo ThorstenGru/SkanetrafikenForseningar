@@ -600,6 +600,17 @@
     statusEl.className = cls || '';
   }
 
+  // Re-renders replace whole sections wholesale (simplest correct way to
+  // stay in sync with `tracking`/`selected`), which can shift a lot of
+  // content vertically when a card grows or a hidden section appears.
+  // Called right after such a re-render so the element you just interacted
+  // with — now possibly somewhere else on the page — stays in view instead
+  // of silently scrolling away.
+  function keepInView(selector) {
+    var el = document.querySelector(selector);
+    if (el) el.scrollIntoView({ block: 'center', behavior: 'instant' });
+  }
+
   function sbHeaders(forWrite) {
     var h = { 'apikey': SB.anonKey, 'Authorization': 'Bearer ' + SB.anonKey, 'Content-Type': 'application/json' };
     if (forWrite) h['x-claim-passphrase'] = SB.writePassphrase;
@@ -1019,6 +1030,12 @@
       saveTrackingRow(rowsByKey[ck], { claimed: e.target.checked });
       renderMyClaims();
       renderAlreadyFiled();
+      // Checking this box can grow the leg's card (two new dropdowns) and
+      // reveal the "already filed" section above it, both of which push
+      // this exact row further down the page — without this, the box you
+      // just clicked visually "disappears" off-screen even though nothing
+      // was removed. Keep the page anchored on what you just interacted with.
+      keepInView('.claimed-check[data-key="' + ck + '"]');
       return;
     }
     if (e.target.classList.contains('claim-choice-select')) {
