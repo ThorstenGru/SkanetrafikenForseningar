@@ -6,19 +6,19 @@
 <title>Skånetrafiken – Delay Compensation Estimate</title>
 <style>
   :root {
-    --bg: #0a0d11;
-    --panel: #12161c;
-    --panel-alt: #171c23;
-    --border: #232a33;
-    --ink: #c9d1dc;
-    --ink-dim: #7c8797;
-    --ink-faint: #4d5560;
-    --amber: #f2a93b;
-    --amber-bright: #ffc061;
-    --red: #e2482d;
-    --red-dim: #4a2620;
-    --green: #4fae83;
-    --green-dim: #1c3129;
+    --bg: #f6f8fa;
+    --panel: #ffffff;
+    --panel-alt: #eef3f7;
+    --border: #dde5ec;
+    --ink: #263241;
+    --ink-dim: #5c6b7a;
+    --ink-faint: #94a3b3;
+    --amber: #c2660f;
+    --amber-bright: #e8872f;
+    --red: #d1453a;
+    --red-dim: #fdecea;
+    --green: #1f9d55;
+    --green-dim: #e6f7ec;
     --display: "Bahnschrift SemiCondensed", "Bahnschrift", "Arial Narrow", "Segoe UI Semibold", sans-serif;
     --body: "Segoe UI", system-ui, -apple-system, sans-serif;
     --mono: ui-monospace, "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
@@ -83,7 +83,7 @@
     font-size: clamp(28px, 4vw, 40px);
     letter-spacing: 0.01em;
     margin: 2px 0 4px;
-    color: #f2f4f7;
+    color: #182430;
     text-wrap: balance;
   }
 
@@ -96,15 +96,15 @@
 
   .disclaimer {
     background: var(--red-dim);
-    border: 1px solid #6b2f26;
+    border: 1px solid #f3c9c2;
     border-radius: 3px;
     padding: 14px 18px;
     font-size: 13px;
-    color: #ffb8a8;
+    color: #7a3229;
     line-height: 1.6;
   }
-  .disclaimer strong { color: #ff8a72; }
-  .disclaimer a { color: #ffcabb; }
+  .disclaimer strong { color: #b23a2e; }
+  .disclaimer a { color: #a83828; }
 
   .stats {
     display: grid;
@@ -228,7 +228,7 @@
     color: var(--ink);
   }
   tbody tr:last-child td { border-bottom: none; }
-  tbody tr:hover td { background: rgba(242, 169, 59, 0.05); }
+  tbody tr:hover td { background: rgba(232, 135, 47, 0.06); }
 
   .num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
@@ -244,7 +244,7 @@
     font-family: var(--mono);
     font-weight: 600;
     font-size: 12.5px;
-    color: #f2f4f7;
+    color: #182430;
   }
 
   .chip {
@@ -257,10 +257,10 @@
     letter-spacing: 0.03em;
     white-space: nowrap;
   }
-  .chip.tier50 { background: rgba(242, 169, 59, 0.15); color: var(--amber-bright); }
-  .chip.tier75 { background: rgba(226, 72, 45, 0.18); color: #ff9d6b; }
-  .chip.tier100 { background: var(--red-dim); color: #ff8a72; }
-  .chip.canceled { background: var(--red-dim); color: #ff8a72; }
+  .chip.tier50 { background: rgba(232, 135, 47, 0.15); color: var(--amber-bright); }
+  .chip.tier75 { background: rgba(209, 69, 58, 0.15); color: #b8471f; }
+  .chip.tier100 { background: var(--red-dim); color: #b23a2e; }
+  .chip.canceled { background: var(--red-dim); color: #b23a2e; }
   .chip.approx { background: var(--panel-alt); color: var(--ink-faint); }
 
   .option {
