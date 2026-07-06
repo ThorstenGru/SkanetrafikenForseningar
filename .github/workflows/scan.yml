@@ -55,6 +55,7 @@ jobs:
       - name: Build compensation estimate page
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SOMMARBILJETT_PURCHASED_AT: ${{ secrets.SOMMARBILJETT_PURCHASED_AT }}
         run: python src/build_compensation.py --out pages_site/compensation.html
 
       - name: Build reasonable claim chains page
@@ -62,6 +63,7 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           CLAIM_TRACKING_PASSPHRASE: ${{ secrets.CLAIM_TRACKING_PASSPHRASE }}
+          SOMMARBILJETT_PURCHASED_AT: ${{ secrets.SOMMARBILJETT_PURCHASED_AT }}
         run: python src/build_claims.py --out pages_site/claims.html
 
       - uses: actions/upload-pages-artifact@v3

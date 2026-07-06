@@ -27,7 +27,7 @@ Usage:
 import argparse
 import json
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import config
 import db
@@ -36,9 +36,30 @@ from build_dashboard import fetch_detail_rows
 TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "compensation_template.html")
 
 
+def _trip_earliest_time(r):
+    """Best-known instant this trip actually happened, for the ticket-
+    purchase cutoff below. Prefers the earliest recorded stop time (sched
+    or actual) since that's precise; falls back to firstSeen (when the
+    scanner first noticed the trip) for cancelled trips, which carry no
+    per-stop detail at all."""
+    candidates = [
+        datetime.fromisoformat(t)
+        for s in (r.get("stops") or [])
+        for t in (s.get("schedTimeIso"), s.get("actTimeIso"))
+        if t
+    ]
+    if candidates:
+        return min(candidates)
+    return datetime.fromisoformat(r["firstSeen"])
+
+
 def compute_compensation(rows):
+    purchased_at = config.sommarbiljett_purchased_at()
     out = []
     for r in rows:
+        if _trip_earliest_time(r) < purchased_at:
+            continue  # trip happened before this ticket was purchased — never eligible, never shown
+
         if r["status"] == "CANCELLED_TRIP":
             out.append(dict(r, calc="cancelled", delayUsedMin=None, delayApprox=False))
             continue
@@ -80,6 +101,7 @@ def main():
 
     end_date = date.today()
     start_date = end_date - timedelta(days=config.RETENTION_DAYS - 1)
+    start_date = max(start_date, config.sommarbiljett_purchased_at().date())
 
     conn = db.connect()
     cur = conn.cursor()

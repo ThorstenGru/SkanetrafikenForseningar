@@ -167,6 +167,23 @@ SOMMARBILJETT_PRICE_SEK = 595
 SOMMARBILJETT_DIVISOR = 40  # "single trips" the ticket price is divided by for price-deduction purposes
 SOMMARBILJETT_SINGLE_TRIP_PRICE_SEK = SOMMARBILJETT_PRICE_SEK / SOMMARBILJETT_DIVISOR  # 14.875 kr
 
+
+def sommarbiljett_purchased_at():
+    """Hard cutoff (2026-07-06, per the user): no trip before the instant
+    this specific ticket was purchased can ever be claimed under it — the
+    rider didn't hold a valid ticket yet. compute_compensation() in
+    build_compensation.py excludes any such trip entirely from both
+    compensation.html and claims.html, not just from the $ calculation.
+
+    Read from an env var (ISO 8601 with offset, e.g.
+    "2026-06-25T11:38:00+02:00") rather than hardcoded here, deliberately —
+    this repo is public, and a specific purchase timestamp is the user's
+    personal data, not project configuration. Raises if unset: a build
+    that can't apply this cutoff must fail loudly, not silently include
+    ineligible trips. See docs/COMPENSATION_RULES.md §13."""
+    from datetime import datetime
+    return datetime.fromisoformat(get_key("SOMMARBILJETT_PURCHASED_AT"))
+
 VOUCHER_BONUS = 1.5  # +50% for choosing a voucher code (värdekod) instead of cash — price-deduction only (section 3); no such bonus is documented for alternative-transport reimbursement (section 4)
 
 CAR_RATE_SEK_PER_KM = 2.5  # Swedish Tax Agency's tax-free mileage rate, 25 kr/mil

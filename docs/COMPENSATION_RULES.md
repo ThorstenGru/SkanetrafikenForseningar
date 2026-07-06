@@ -401,3 +401,43 @@ fire a request per keystroke). A small status line next to the section
 heading reports "synced with Supabase" or a visible error if a read/write
 fails — failures don't roll back the UI, since this is personal
 record-keeping, not a transactional system.
+
+## 13. Ticket-purchase cutoff — hard restriction
+
+Per the user (2026-07-06, emphatic): a specific Sommarbiljett's purchase
+instant is a hard floor. No trip that happened before that instant can
+ever be claimed under that ticket, because the rider didn't hold a valid
+ticket yet — such trips must be excluded entirely from compensation.html
+and claims.html, not merely deprioritized or shown-but-excluded like
+cancelled trips are.
+
+**Implementation:** `config.sommarbiljett_purchased_at()` reads the
+cutoff from the `SOMMARBILJETT_PURCHASED_AT` environment variable (ISO
+8601 with UTC offset) — deliberately **not hardcoded in this file or
+anywhere else in the repo**, since the actual purchase timestamp is the
+user's personal data and this repo is public (see README's Security
+section for the same standard already applied to API keys). It's
+provided as a GitHub Actions secret at build time instead, the same
+pattern used for `SUPABASE_ANON_KEY`/`CLAIM_TRACKING_PASSPHRASE`.
+`compute_compensation()` (`build_compensation.py`, shared by both pages)
+computes each trip's earliest known timestamp — the earliest recorded
+stop time if any per-stop detail exists, else `firstSeen` for cancelled
+trips — and drops the trip entirely if that's before the cutoff, before
+any other eligibility check runs. The accessor raises if the env var is
+unset rather than defaulting to "include everything": a build that can't
+apply this restriction must fail, not silently risk showing an ineligible
+trip.
+
+**Scope decision:** applies to compensation.html and claims.html only,
+not index.html (the delay-history dashboard) — the dashboard serves this
+project's other two stated purposes (evidence for a systemic complaint to
+Skånetrafiken, personal stats/log — see top of README), which are about
+network-wide delay patterns generally and have nothing to do with which
+specific ticket was held when. Flagged to the user as an interpretation
+of "discard... never shown... in the app," open to correction if a
+narrower or broader scope was actually intended.
+
+The ticket's own ID (for use when actually filing claims, e.g.
+pre-filling a claim form) is tracked in the user's private assistant
+memory, not in this repo — it has no role in any build script and isn't
+needed by anything the app itself computes or displays.

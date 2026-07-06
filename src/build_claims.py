@@ -109,6 +109,7 @@ def main():
 
     end_date = date.today()
     start_date = end_date - timedelta(days=config.RETENTION_DAYS - 1)
+    start_date = max(start_date, config.sommarbiljett_purchased_at().date())
 
     conn = db.connect()
     cur = conn.cursor()
