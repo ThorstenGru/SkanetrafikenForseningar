@@ -265,3 +265,30 @@ get from Ystad to Simrishamn?"
   time, not a globally optimal matching — good enough to illustrate which
   combinations are plausible, not guaranteed to find every possible
   grouping in unusual interleavings.
+
+**Added 2026-07-06, second round:**
+- **Day filter**, defaulting to the most recent day (same convention as the
+  dashboard's day picker), scoped to the "Suggested reasonable chains"
+  browsing section only — "Your claim list" always shows the full
+  selection across all days regardless of the filter, since it's a
+  tracking record, not something that should appear to lose entries when
+  you're just narrowing your browsing view.
+- **Ranking by reasonability then possible max amount.** "Reasonability" is
+  chain length (a longer connected chain is a stronger, more concrete
+  travel story than a lone leg); ties break on the highest possible claim
+  value, using whichever of price-deduction-voucher or car-reimbursement is
+  larger per leg (they're alternatives, not additive — section 3/4). Days
+  are ordered by their single best chain; within a day, chains are shown
+  best-first with a score badge. The gap narrative between chains stays
+  computed and displayed in strict chronological order underneath (ranking
+  the display would make "how did you get from X to Y" reference the wrong
+  pair of places).
+- **Claim tracking** (a "Claim started" checkbox + free-text field for
+  Skånetrafiken's own claim number once filed) lives only in "Your claim
+  list", persisted to the browser's `localStorage` keyed by trip — there is
+  no server for a static GitHub Pages site to write to, so this is
+  single-browser, single-device record-keeping, not synced anywhere and
+  lost if that browser's storage is cleared. If this needs to be durable
+  across devices later, the natural next step is a Supabase table written
+  via a scoped anon key + RLS policy (the project already uses Supabase),
+  not a change to how the page itself is built.

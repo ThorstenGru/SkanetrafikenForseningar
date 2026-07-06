@@ -153,6 +153,7 @@
   .stat .sub { font-size: 12px; color: var(--ink-faint); font-family: var(--mono); }
   .stat.crit .value { color: var(--red); }
   .stat.ok .value { color: var(--green); }
+  #myClaimsStats { grid-template-columns: repeat(5, 1fr); }
 
   section { display: flex; flex-direction: column; gap: 12px; }
 
@@ -271,11 +272,18 @@
     border: 1px solid var(--border);
     border-radius: 3px;
     padding: 6px 10px;
-    cursor: pointer;
     font-size: 12.5px;
   }
   .chain-leg:hover { border-color: var(--amber); }
   .chain-leg input[type="checkbox"] { accent-color: var(--amber); cursor: pointer; }
+  .leg-select {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    row-gap: 4px;
+    cursor: pointer;
+  }
   .leg-route { color: var(--ink); }
   .leg-time { color: var(--ink-dim); font-size: 11.5px; }
   .dest-arrow { color: var(--ink-faint); margin: 0 3px; }
@@ -290,6 +298,36 @@
     padding-left: 8px;
   }
   .leg-amounts strong { color: var(--ink); font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  .claim-track {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border-left: 1px solid var(--border);
+    padding-left: 8px;
+    font-size: 11.5px;
+    color: var(--ink-dim);
+  }
+  .claimed-label { display: flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap; }
+  .claimed-label input[type="checkbox"] { accent-color: var(--green); cursor: pointer; }
+  .claim-number-input {
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 3px 6px;
+    font-size: 11.5px;
+    color: var(--ink);
+    width: 150px;
+  }
+  .claim-number-input:focus { border-color: var(--amber); outline: none; }
+
+  .chain-score {
+    font-size: 11px;
+    font-family: var(--mono);
+    color: var(--ink-faint);
+    letter-spacing: 0.02em;
+  }
+  .chain-score strong { color: var(--ink-dim); }
 
   .gap-warning {
     background: var(--red-dim);
@@ -336,7 +374,7 @@
   :focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
 
   @media (max-width: 900px) {
-    .stats { grid-template-columns: repeat(2, 1fr); }
+    .stats, #myClaimsStats { grid-template-columns: repeat(2, 1fr); }
   }
   @media (prefers-reduced-motion: reduce) {
     * { transition: none !important; animation: none !important; }
@@ -387,9 +425,11 @@
   <section>
     <div class="section-head">
       <h2>Suggested reasonable chains</h2>
-      <span class="hint">Network-wide, illustrative — grouped by day into the longest sequences where one trip's destination is the next trip's origin. Tick the legs that were actually yours.</span>
+      <span class="hint">Network-wide, illustrative — grouped by day into the longest sequences where one trip's destination is the next trip's origin. Days and chains are ranked by reasonability (chain length) then possible max amount. Tick the legs that were actually yours.</span>
     </div>
     <div class="controls">
+      <label for="dayFilter">Day</label>
+      <select id="dayFilter"></select>
       <button class="link-btn" id="selectSuggestedBtn">Reset to suggested selection</button>
       <button class="link-btn" id="clearBtn">Clear all</button>
     </div>
@@ -399,7 +439,7 @@
   <section>
     <div class="section-head">
       <h2>Your claim list</h2>
-      <span class="hint">Recomputed live from the checkboxes above — this is what an investigator would actually see</span>
+      <span class="hint">Recomputed live from the checkboxes above — this is what an investigator would actually see. Mark "Claim started" and record Skånetrafiken's claim number once you file — saved in this browser only (not synced elsewhere).</span>
     </div>
     <div class="stats" id="myClaimsStats"></div>
     <div id="myClaimsDays"></div>
@@ -457,6 +497,36 @@
   }
   function rowKey(r) { return r.trip + '|' + r.date; }
 
+  // Claim tracking (claim-started + Skånetrafiken claim number) is personal
+  // record-keeping with no server to write to on a static GitHub Pages
+  // site — persisted in this browser's localStorage only, keyed by trip.
+  // Lost if browser storage is cleared, and not synced across devices.
+  var TRACKING_KEY = 'skaneClaimsTracking_v1';
+  var tracking = {};
+  try { tracking = JSON.parse(localStorage.getItem(TRACKING_KEY) || '{}'); } catch (e) { tracking = {}; }
+  function saveTracking() {
+    try { localStorage.setItem(TRACKING_KEY, JSON.stringify(tracking)); } catch (e) { /* storage unavailable — tracking just won't persist */ }
+  }
+  function trackingFor(key) { return tracking[key] || { claimed: false, claimNumber: '' }; }
+
+  // "Reasonability" = chain length (a longer connected chain is a stronger,
+  // more concrete travel story than a lone leg). Ties broken by the
+  // possible max amount — price deduction and car reimbursement are
+  // alternatives, not additive (see COMPENSATION_RULES.md §3/4), so the
+  // best-case value per leg is whichever of the two is larger.
+  function legValue(r) {
+    if (r.calc !== 'eligible') return 0;
+    return Math.max(r.deductionVoucher || 0, r.carCash || 0);
+  }
+  function chainScore(chain) {
+    return { legs: chain.length, value: chain.reduce(function (s, r) { return s + legValue(r); }, 0) };
+  }
+  function compareChains(a, b) {
+    var sa = chainScore(a), sb = chainScore(b);
+    if (sb.legs !== sa.legs) return sb.legs - sa.legs;
+    return sb.value - sa.value;
+  }
+
   function haversineMeters(lat1, lon1, lat2, lon2) {
     if (lat1 == null || lon1 == null || lat2 == null || lon2 == null) return null;
     var R = 6371000, toRad = function (d) { return d * Math.PI / 180; };
@@ -497,7 +567,8 @@
     return chains;
   }
 
-  function legHtml(r) {
+  function legHtml(r, opts) {
+    opts = opts || {};
     var key = rowKey(r);
     var checked = selected[key] ? ' checked' : '';
     var tier = r.calc === 'cancelled'
@@ -509,7 +580,7 @@
           '<span>Bilresa: <strong>' + fmtSek(r.carCash) + '</strong> · ' + fmtKm(r.distanceKm) + '</span>' +
         '</span>'
       : '';
-    return '<label class="chain-leg">' +
+    var selectHtml = '<label class="leg-select">' +
       '<input type="checkbox" class="leg-check" data-key="' + esc(key) + '"' + checked + '>' +
       '<span class="line-badge">' + esc(r.line) + '</span>' +
       '<span class="leg-route">' + esc(r.originName || '?') + '<span class="dest-arrow">→</span>' + esc(r.dest || '?') + '</span>' +
@@ -517,10 +588,25 @@
       tier +
       amounts +
       '</label>';
+
+    var trackHtml = '';
+    if (opts.tracking) {
+      var t = trackingFor(key);
+      trackHtml = '<span class="claim-track">' +
+        '<label class="claimed-label"><input type="checkbox" class="claimed-check" data-key="' + esc(key) + '"' + (t.claimed ? ' checked' : '') + '> Claim started</label>' +
+        '<input type="text" class="claim-number-input" data-key="' + esc(key) + '" placeholder="Skånetrafiken claim #" value="' + esc(t.claimNumber) + '">' +
+        '</span>';
+    }
+    return '<div class="chain-leg">' + selectHtml + trackHtml + '</div>';
   }
 
-  function chainHtml(chain) {
-    return '<div class="chain-card">' + chain.map(legHtml).join('<span class="chain-arrow">›</span>') + '</div>';
+  function chainHtml(chain, opts) {
+    return '<div class="chain-card">' + chain.map(function (r) { return legHtml(r, opts); }).join('<span class="chain-arrow">›</span>') + '</div>';
+  }
+
+  function chainScoreHtml(chain) {
+    var s = chainScore(chain);
+    return '<div class="chain-score">' + s.legs + ' leg' + (s.legs > 1 ? 's' : '') + ' · up to <strong>' + fmtSek(s.value) + '</strong> possible</div>';
   }
 
   function gapHtml(prevLast, nextFirst) {
@@ -547,19 +633,20 @@
   var dayChains = {};
   Object.keys(byDate).forEach(function (d) { dayChains[d] = buildChains(byDate[d]); });
 
+  // The default suggestion is each day's top-ranked chain — same
+  // reasonability-then-value ordering used for display (compareChains), so
+  // what's pre-checked always matches what's shown first.
   var suggested = {};
   Object.keys(dayChains).forEach(function (d) {
-    var best = dayChains[d].reduce(function (best, c) {
-      if (!best) return c;
-      if (c.length !== best.length) return c.length > best.length ? c : best;
-      var sum = function (x) { return x.reduce(function (a, r) { return a + (r.deductionCash || 0); }, 0); };
-      return sum(c) > sum(best) ? c : best;
-    }, null);
+    var best = dayChains[d].slice().sort(compareChains)[0];
     if (best) best.forEach(function (r) { suggested[rowKey(r)] = true; });
   });
 
   var selected = {};
   Object.keys(suggested).forEach(function (k) { selected[k] = true; });
+
+  var dayFilterEl = document.getElementById('dayFilter');
+  populateDayFilter();
 
   var daysWithGaps = Object.keys(dayChains).filter(function (d) { return dayChains[d].length > 1; }).length;
 
@@ -573,26 +660,52 @@
       '<div class="value">' + s.value + '</div><div class="sub">' + esc(s.sub) + '</div></div>';
   }).join('');
 
-  function renderChainDays() {
+  function populateDayFilter() {
     var dates = Object.keys(dayChains).sort().reverse();
-    document.getElementById('chainDays').innerHTML = dates.map(function (d) {
-      var chains = dayChains[d].slice().sort(function (a, b) {
-        var at = a[0].originTimeIso || a[0].destTimeIso || '';
-        var bt = b[0].originTimeIso || b[0].destTimeIso || '';
-        return at < bt ? -1 : at > bt ? 1 : 0;
-      });
-      var parts = ['<div class="day-group"><h3 class="day-heading">' + fmtDate(d) +
-        (chains.length > 1
-          ? ' <span class="chip canceled">' + (chains.length - 1) + ' gap(s) network-wide</span>'
+    dayFilterEl.innerHTML = '<option value="__ALL__">All days</option>' +
+      dates.map(function (d) { return '<option value="' + d + '">' + fmtDate(d) + '</option>'; }).join('');
+    dayFilterEl.value = dates.length ? dates[0] : '__ALL__';
+  }
+
+  // Chains stay in chronological order internally (dayChains[d] is built
+  // that way) so the gap narrative between them reads correctly — "how did
+  // you get from X to Y" only makes sense compared against what actually
+  // happened right before it in time. Ranking by reasonability/value is
+  // layered on top for DISPLAY ORDER without disturbing that: days are
+  // ordered by their single best chain, and within a day chains are shown
+  // best-first with a score badge, while the (still chronologically
+  // computed) gaps are listed separately underneath.
+  function renderChainDays() {
+    var filterVal = dayFilterEl.value;
+    var dayInfos = Object.keys(dayChains).map(function (d) {
+      var chrono = dayChains[d];
+      var byScore = chrono.slice().sort(compareChains);
+      var gaps = [];
+      for (var i = 1; i < chrono.length; i++) {
+        gaps.push(gapHtml(chrono[i - 1][chrono[i - 1].length - 1], chrono[i][0]));
+      }
+      return { date: d, chrono: chrono, byScore: byScore, gaps: gaps, best: chainScore(byScore[0]) };
+    });
+    dayInfos.sort(function (a, b) {
+      if (b.best.legs !== a.best.legs) return b.best.legs - a.best.legs;
+      return b.best.value - a.best.value;
+    });
+    if (filterVal !== '__ALL__') dayInfos = dayInfos.filter(function (info) { return info.date === filterVal; });
+
+    document.getElementById('chainDays').innerHTML = dayInfos.map(function (info) {
+      var parts = ['<div class="day-group"><h3 class="day-heading">' + fmtDate(info.date) +
+        (info.chrono.length > 1
+          ? ' <span class="chip canceled">' + (info.chrono.length - 1) + ' gap(s) network-wide</span>'
           : ' <span class="chip ok">one continuous chain</span>') +
         '</h3>'];
-      chains.forEach(function (chain, i) {
-        if (i > 0) parts.push(gapHtml(chains[i - 1][chains[i - 1].length - 1], chain[0]));
+      info.byScore.forEach(function (chain) {
+        parts.push(chainScoreHtml(chain));
         parts.push(chainHtml(chain));
       });
+      if (info.gaps.length) parts.push(info.gaps.join(''));
       parts.push('</div>');
       return parts.join('');
-    }).join('') || '<p class="hint">No eligible trips in this window.</p>';
+    }).join('') || '<p class="hint">No eligible trips ' + (filterVal !== '__ALL__' ? 'for this day' : 'in this window') + '.</p>';
   }
 
   function renderMyClaims() {
@@ -616,7 +729,7 @@
         '</h3>'];
       segs.forEach(function (seg, i) {
         if (i > 0) { gapCount++; parts.push(gapHtml(segs[i - 1][segs[i - 1].length - 1], seg[0])); }
-        parts.push(chainHtml(seg));
+        parts.push(chainHtml(seg, { tracking: true }));
       });
       parts.push('</div>');
       return parts.join('');
@@ -625,12 +738,14 @@
     chosen.forEach(function (r) {
       if (r.calc === 'eligible') { totalCash += r.deductionCash; totalVoucher += r.deductionVoucher; }
     });
+    var claimedCount = chosen.filter(function (r) { return trackingFor(rowKey(r)).claimed; }).length;
 
     document.getElementById('myClaimsStats').innerHTML = [
       { label: 'Selected claims', value: chosen.length, sub: dates.length + ' day(s)' },
       { label: 'Price deduction, cash', value: fmtSek(totalCash), sub: 'if all claimed as cash' },
       { label: 'Price deduction, voucher', value: fmtSek(totalVoucher), sub: '+50% bonus (värdekod)' },
       { label: 'Unexplained gaps', value: gapCount, sub: gapCount ? 'be ready to explain these' : 'fully consistent', crit: gapCount > 0 },
+      { label: 'Claims started', value: claimedCount, sub: claimedCount + ' / ' + chosen.length + ' marked filed' },
     ].map(function (s) {
       return '<div class="stat' + (s.crit ? ' crit' : '') + '"><div class="label">' + esc(s.label) + '</div>' +
         '<div class="value">' + s.value + '</div><div class="sub">' + esc(s.sub) + '</div></div>';
@@ -643,10 +758,28 @@
   function renderAll() { renderChainDays(); renderMyClaims(); }
 
   document.addEventListener('change', function (e) {
-    if (!e.target.classList.contains('leg-check')) return;
+    if (e.target.classList.contains('leg-check')) {
+      var key = e.target.dataset.key;
+      if (e.target.checked) selected[key] = true; else delete selected[key];
+      renderAll();
+      return;
+    }
+    if (e.target.classList.contains('claimed-check')) {
+      var ck = e.target.dataset.key;
+      tracking[ck] = tracking[ck] || { claimed: false, claimNumber: '' };
+      tracking[ck].claimed = e.target.checked;
+      saveTracking();
+      renderMyClaims();
+    }
+  });
+  // Plain 'input' (not 'change'/full re-render) so typing a claim number
+  // doesn't rebuild the DOM under the user's cursor on every keystroke.
+  document.addEventListener('input', function (e) {
+    if (!e.target.classList.contains('claim-number-input')) return;
     var key = e.target.dataset.key;
-    if (e.target.checked) selected[key] = true; else delete selected[key];
-    renderAll();
+    tracking[key] = tracking[key] || { claimed: false, claimNumber: '' };
+    tracking[key].claimNumber = e.target.value;
+    saveTracking();
   });
 
   document.getElementById('selectSuggestedBtn').addEventListener('click', function () {
@@ -658,6 +791,7 @@
     selected = {};
     renderAll();
   });
+  dayFilterEl.addEventListener('change', renderChainDays);
 
   renderAll();
 })();
