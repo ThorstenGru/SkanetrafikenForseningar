@@ -58,6 +58,15 @@ Open the resulting `dashboard.html` directly in a browser. At the top is a
 "Showing day" selector. Everything else (stats, per-line, the log) filters
 by the selected day.
 
+```bash
+export DATABASE_URL=...
+python src/build_compensation.py                 # compensation.html, full 45-day window
+python src/build_compensation.py --out other.html
+```
+
+Illustrative delay-compensation estimate (price deduction + car
+reimbursement) — see [docs/COMPENSATION_RULES.md](COMPENSATION_RULES.md).
+
 ## Backfill historical data (KoDa)
 
 The live scanner only sees delays from the moment it starts polling — GTFS-RT

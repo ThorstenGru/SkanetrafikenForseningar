@@ -56,6 +56,19 @@
     padding-bottom: 20px;
   }
 
+  .pagenav {
+    display: flex;
+    gap: 14px;
+    font-family: var(--display);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .pagenav a { color: var(--ink-dim); text-decoration: none; padding-bottom: 3px; border-bottom: 2px solid transparent; }
+  .pagenav a:hover { color: var(--amber); }
+  .pagenav a.current { color: var(--amber-bright); border-bottom-color: var(--amber); }
+
   .eyebrow {
     font-family: var(--display);
     font-size: 12.5px;
@@ -376,6 +389,10 @@
 
 <div class="wrap">
   <header class="top">
+    <nav class="pagenav">
+      <a href="index.html" class="current">Delay history</a>
+      <a href="compensation.html">Compensation estimate</a>
+    </nav>
     <div class="eyebrow">Skånetrafiken · GTFS Regional / Trafiklab</div>
     <h1>Delay history, whole network</h1>
     <div class="meta-line" id="metaLine">loading…</div>

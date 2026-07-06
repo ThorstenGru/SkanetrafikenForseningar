@@ -129,3 +129,30 @@ def route_type_label(route_type):
     if route_type is None:
         return "UNKNOWN"
     return ROUTE_TYPE_LABELS.get(route_type, "OTHER")
+
+
+# Delay-compensation constants, per docs/COMPENSATION_RULES.md (retrieved
+# 2026-07-05 from skanetrafiken.se — they can change these without notice).
+# Only used by build_compensation.py; the estimate is illustrative, not a
+# real claim calculation.
+MIN_DELAY_FOR_COMPENSATION_MIN = 20  # below this, no compensation applies at all
+
+SOMMARBILJETT_PRICE_SEK = 595
+SOMMARBILJETT_DIVISOR = 40  # "single trips" the ticket price is divided by for price-deduction purposes
+SOMMARBILJETT_SINGLE_TRIP_PRICE_SEK = SOMMARBILJETT_PRICE_SEK / SOMMARBILJETT_DIVISOR  # 14.875 kr
+
+VOUCHER_BONUS = 1.5  # +50% for choosing a voucher code (värdekod) instead of cash — price-deduction only (section 3); no such bonus is documented for alternative-transport reimbursement (section 4)
+
+CAR_RATE_SEK_PER_KM = 2.5  # Swedish Tax Agency's tax-free mileage rate, 25 kr/mil
+ALT_TRANSPORT_CAP_SEK = 2960  # max per journey for car/taxi/other-operator reimbursement, effective 2026-01-01
+
+
+def price_deduction_pct(delay_min):
+    """Price-deduction tier for a given final-destination delay, in minutes."""
+    if delay_min >= 60:
+        return 1.00
+    if delay_min >= 40:
+        return 0.75
+    if delay_min >= 20:
+        return 0.50
+    return 0.0

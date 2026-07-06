@@ -11,6 +11,12 @@ complaints to Skånetrafiken about recurring problems, and personal stats.
 **Live dashboard:** https://thorstengru.github.io/SkanetrafikenForseningar/
 (rebuilt automatically on every scan run).
 
+**Compensation estimate:** https://thorstengru.github.io/SkanetrafikenForseningar/compensation.html
+— illustrative delay-compensation figures per trip (price deduction and car
+reimbursement), based on the rules in
+[docs/COMPENSATION_RULES.md](docs/COMPENSATION_RULES.md). Not a real claim
+tool — see the disclaimer on the page itself.
+
 ## Documentation
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — the pipeline in detail, design decisions and why.
@@ -87,6 +93,7 @@ individual delay) lives in a separate, non-public Postgres database.
 | `src/coverage_check.py` | Compares a finished day's timetable against what actually showed up in the feed. Runs automatically daily. |
 | `src/housekeeping.py` | Deletes data older than 45 days. Runs automatically daily. |
 | `src/build_dashboard.py` | Builds the standalone HTML dashboard. Runs automatically on every scan. |
+| `src/build_compensation.py` | Builds the compensation-estimate page (`compensation.html`). Runs automatically on every scan. |
 | `src/static_index.py` | Can be run standalone to force a static-index refresh. |
 | `src/backfill_koda.py` | One-off backfill of past days from Trafiklab's KoDa historical archive. Manually triggered (`backfill.yml`), see [docs/RUNBOOK.md](docs/RUNBOOK.md#backfill-historical-data-koda). |
 
@@ -98,9 +105,11 @@ individual delay) lives in a separate, non-public Postgres database.
   not "my specific commute" — every row is a standalone trip, not a
   personally-defined multi-leg journey. See
   [docs/COMPENSATION_RULES.md](docs/COMPENSATION_RULES.md) for the reasoning.
-- No actual compensation-amount calculation (SEK) yet — the underlying data
-  (final-stop delay, max delay, distance, vehicle type) is all in place,
-  the calculation itself just isn't wired up.
+- Compensation amounts (`compensation.html`) are an illustrative estimate,
+  not a real claim calculation — see the page's own disclaimer and
+  [docs/COMPENSATION_RULES.md](docs/COMPENSATION_RULES.md) for caveats
+  (e.g. no documented voucher bonus for car reimbursement, cancelled trips
+  are listed but not scored).
 - Polling happens every 2 hours — short delays that occur and resolve
   within that window can be missed or underestimated. The quota (30,000
   requests/30 days) allows much more frequent polling if that becomes

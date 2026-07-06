@@ -1,0 +1,606 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skånetrafiken – Delay Compensation Estimate</title>
+<style>
+  :root {
+    --bg: #0a0d11;
+    --panel: #12161c;
+    --panel-alt: #171c23;
+    --border: #232a33;
+    --ink: #c9d1dc;
+    --ink-dim: #7c8797;
+    --ink-faint: #4d5560;
+    --amber: #f2a93b;
+    --amber-bright: #ffc061;
+    --red: #e2482d;
+    --red-dim: #4a2620;
+    --green: #4fae83;
+    --green-dim: #1c3129;
+    --display: "Bahnschrift SemiCondensed", "Bahnschrift", "Arial Narrow", "Segoe UI Semibold", sans-serif;
+    --body: "Segoe UI", system-ui, -apple-system, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--body);
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection { background: var(--amber); color: #1a1000; }
+  a { color: var(--amber); }
+
+  .wrap {
+    max-width: 1360px;
+    margin: 0 auto;
+    padding: 28px 24px 80px;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+
+  header.top {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 20px;
+  }
+
+  .pagenav {
+    display: flex;
+    gap: 14px;
+    font-family: var(--display);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .pagenav a { color: var(--ink-dim); text-decoration: none; padding-bottom: 3px; border-bottom: 2px solid transparent; }
+  .pagenav a:hover { color: var(--amber); }
+  .pagenav a.current { color: var(--amber-bright); border-bottom-color: var(--amber); }
+
+  .eyebrow {
+    font-family: var(--display);
+    font-size: 12.5px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--amber);
+    font-weight: 600;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(28px, 4vw, 40px);
+    letter-spacing: 0.01em;
+    margin: 2px 0 4px;
+    color: #f2f4f7;
+    text-wrap: balance;
+  }
+
+  .meta-line {
+    color: var(--ink-dim);
+    font-size: 13.5px;
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .disclaimer {
+    background: var(--red-dim);
+    border: 1px solid #6b2f26;
+    border-radius: 3px;
+    padding: 14px 18px;
+    font-size: 13px;
+    color: #ffb8a8;
+    line-height: 1.6;
+  }
+  .disclaimer strong { color: #ff8a72; }
+  .disclaimer a { color: #ffcabb; }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .stat {
+    background: var(--panel);
+    padding: 18px 18px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+  .stat .label {
+    font-family: var(--display);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    font-weight: 600;
+  }
+  .stat .value {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 28px;
+    font-weight: 600;
+    color: var(--amber-bright);
+    letter-spacing: -0.01em;
+  }
+  .stat .sub {
+    font-size: 12px;
+    color: var(--ink-faint);
+    font-family: var(--mono);
+  }
+  .stat.crit .value { color: var(--red); }
+
+  section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .section-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  h2 {
+    font-family: var(--display);
+    font-size: 13px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink);
+    font-weight: 700;
+    margin: 0;
+  }
+
+  .hint { font-size: 12.5px; color: var(--ink-faint); }
+
+  .rules-panel {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+    font-size: 13px;
+  }
+  .rules-panel .cell { background: var(--panel); padding: 12px 16px; }
+  .rules-panel dt {
+    font-family: var(--display);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 4px;
+  }
+  .rules-panel dd { margin: 0; font-family: var(--mono); color: var(--ink); font-variant-numeric: tabular-nums; }
+
+  .table-scroll {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--panel);
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+
+  thead th {
+    position: sticky;
+    top: 0;
+    background: var(--panel-alt);
+    text-align: left;
+    font-family: var(--display);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-weight: 600;
+    color: var(--ink-dim);
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  thead th.sortable { cursor: pointer; user-select: none; }
+  thead th.sortable:hover { color: var(--amber); }
+  thead th .arrow { opacity: 0.5; margin-left: 3px; }
+
+  tbody td {
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+    color: var(--ink);
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: rgba(242, 169, 59, 0.05); }
+
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  .line-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 30px;
+    padding: 2px 7px;
+    border-radius: 3px;
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    font-family: var(--mono);
+    font-weight: 600;
+    font-size: 12.5px;
+    color: #f2f4f7;
+  }
+
+  .chip {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-family: var(--display);
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+  }
+  .chip.tier50 { background: rgba(242, 169, 59, 0.15); color: var(--amber-bright); }
+  .chip.tier75 { background: rgba(226, 72, 45, 0.18); color: #ff9d6b; }
+  .chip.tier100 { background: var(--red-dim); color: #ff8a72; }
+  .chip.canceled { background: var(--red-dim); color: #ff8a72; }
+  .chip.approx { background: var(--panel-alt); color: var(--ink-faint); }
+
+  .option {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .option .cash { color: var(--ink); }
+  .option .voucher { color: var(--ink-faint); font-size: 12px; }
+  .or-note { color: var(--ink-faint); font-style: italic; font-size: 12px; }
+
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  input[type="text"], select {
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 13px;
+    padding: 8px 10px;
+    border-radius: 3px;
+    outline: none;
+  }
+  input[type="text"] { min-width: 220px; }
+  input[type="text"]:focus, select:focus { border-color: var(--amber); }
+  input[type="text"]::placeholder { color: var(--ink-faint); }
+  select { cursor: pointer; }
+  .controls label {
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-faint);
+    font-family: var(--display);
+    margin-right: 4px;
+  }
+
+  .pager {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    justify-content: flex-end;
+    font-size: 12.5px;
+    color: var(--ink-dim);
+    font-family: var(--mono);
+  }
+  .pager button {
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    color: var(--ink);
+    font-family: var(--display);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 6px 12px;
+    border-radius: 3px;
+    cursor: pointer;
+  }
+  .pager button:hover:not(:disabled) { border-color: var(--amber); color: var(--amber); }
+  .pager button:disabled { opacity: 0.35; cursor: not-allowed; }
+
+  footer {
+    color: var(--ink-faint);
+    font-size: 12px;
+    border-top: 1px solid var(--border);
+    padding-top: 16px;
+    line-height: 1.7;
+  }
+
+  :focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+
+  @media (max-width: 900px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <nav class="pagenav">
+      <a href="index.html">Delay history</a>
+      <a href="compensation.html" class="current">Compensation estimate</a>
+    </nav>
+    <div class="eyebrow">Skånetrafiken · Sommarbiljetten scope</div>
+    <h1>Ersättning vid försening — estimated compensation</h1>
+    <div class="meta-line" id="metaLine">loading…</div>
+  </header>
+
+  <div class="disclaimer">
+    <strong>Illustrative estimate only — not a real claim.</strong> Figures below are
+    computed from this project's own published rules research
+    (<a href="https://github.com/ThorstenGru/SkanetrafikenForseningar/blob/master/docs/COMPENSATION_RULES.md" target="_blank" rel="noopener">docs/COMPENSATION_RULES.md</a>),
+    which Skånetrafiken can change without notice. Price deduction and alternative-transport
+    (car) compensation are two separate options — the rules do not allow claiming both for
+    the same journey. Applications must be filed within <strong>2 months</strong> of the delay,
+    via <a href="https://www.skanetrafiken.se/kundservice/forseningsersattning/ersattning-vid-forsening/" target="_blank" rel="noopener">skanetrafiken.se</a>.
+    Always verify the current rules there before filing.
+  </div>
+
+  <section class="stats" id="statStrip"></section>
+
+  <section>
+    <div class="section-head">
+      <h2>How this is calculated</h2>
+      <span class="hint">See docs/COMPENSATION_RULES.md sections 3 &amp; 4 for full source text</span>
+    </div>
+    <dl class="rules-panel" id="rulesPanel"></dl>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Eligible trips (≥ 20 min delay at final stop, Sommarbiljett-valid)</h2>
+      <span class="hint" id="logCount"></span>
+    </div>
+
+    <div class="controls">
+      <label for="q">Search</label>
+      <input type="text" id="q" placeholder="Line, trip number, destination…" />
+
+      <label for="tierFilter">Tier</label>
+      <select id="tierFilter">
+        <option value="">All</option>
+        <option value="50">50% (20–39 min)</option>
+        <option value="75">75% (40–59 min)</option>
+        <option value="100">100% (60+ min)</option>
+        <option value="cancelled">Cancelled (not calculated)</option>
+      </select>
+
+      <label for="pageSize">Rows/page</label>
+      <select id="pageSize">
+        <option>25</option>
+        <option selected>50</option>
+        <option>100</option>
+      </select>
+    </div>
+
+    <div class="table-scroll">
+      <table id="logTable">
+        <thead>
+          <tr>
+            <th class="sortable" data-key="date">Date<span class="arrow"></span></th>
+            <th class="sortable" data-key="line">Line<span class="arrow"></span></th>
+            <th class="sortable" data-key="vehicleType">Vehicle<span class="arrow"></span></th>
+            <th class="sortable" data-key="tripNumber">Trip #<span class="arrow"></span></th>
+            <th class="sortable" data-key="dest">Destination<span class="arrow"></span></th>
+            <th class="sortable" data-key="distanceKm">Distance<span class="arrow"></span></th>
+            <th class="sortable" data-key="delayUsedMin">Delay used<span class="arrow"></span></th>
+            <th class="sortable" data-key="deductionPct">Tier<span class="arrow"></span></th>
+            <th class="sortable" data-key="deductionCash">Price deduction<span class="arrow"></span></th>
+            <th class="sortable" data-key="carCash">Car reimbursement<span class="arrow"></span></th>
+          </tr>
+        </thead>
+        <tbody id="logBody"></tbody>
+      </table>
+    </div>
+
+    <div class="pager">
+      <span id="pageInfo"></span>
+      <button id="prevBtn">← Prev</button>
+      <button id="nextBtn">Next →</button>
+    </div>
+  </section>
+
+  <footer>
+    Sources: <a href="https://www.skanetrafiken.se/kundservice/forseningsersattning/ersattning-vid-forsening/" target="_blank" rel="noopener">Ersättning vid försening</a>,
+    <a href="https://www.skanetrafiken.se/sa-reser-du-med-oss/villkor/villkor-for-ersattning-vid-forsening/" target="_blank" rel="noopener">Villkor för ersättning vid försening</a>,
+    <a href="https://www.skanetrafiken.se/sommarbiljetten" target="_blank" rel="noopener">Sommarbiljetten</a> (retrieved 2026-07-05).
+    "Delay used" is the delay at the trip's final stop, or — when that stop was never captured in the realtime feed — the largest delay observed anywhere along the trip instead (marked <span class="chip approx">approx.</span>).
+    Fully cancelled trips are listed for visibility but excluded from the calculation, since the rules don't specify a clear formula for a trip that never ran.
+  </footer>
+</div>
+
+<script type="application/json" id="raw-data">__DATA_JSON__</script>
+<script>
+(function () {
+  var payload = JSON.parse(document.getElementById('raw-data').textContent);
+  var data = payload.rows;
+  var C = payload.constants;
+
+  function esc(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+    });
+  }
+  function fmtKm(km) {
+    if (km === null || km === undefined) return '–';
+    return km.toFixed(1) + ' km';
+  }
+  function fmtSek(v) {
+    if (v === null || v === undefined) return '–';
+    return v.toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + ' kr';
+  }
+  var WEEKDAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  function fmtDate(yyyymmdd) {
+    if (!yyyymmdd) return '–';
+    return yyyymmdd.slice(0, 4) + '-' + yyyymmdd.slice(4, 6) + '-' + yyyymmdd.slice(6, 8);
+  }
+
+  var eligible = data.filter(function (r) { return r.calc === 'eligible'; });
+  var cancelled = data.filter(function (r) { return r.calc === 'cancelled'; });
+
+  var sumDeductionCash = eligible.reduce(function (a, r) { return a + r.deductionCash; }, 0);
+  var sumDeductionVoucher = eligible.reduce(function (a, r) { return a + r.deductionVoucher; }, 0);
+  var sumCarCash = eligible.reduce(function (a, r) { return a + (r.carCash || 0); }, 0);
+  var approxCount = eligible.filter(function (r) { return r.delayApprox; }).length;
+
+  document.getElementById('metaLine').textContent =
+    'Window ' + fmtDate(payload.windowStart) + ' .. ' + fmtDate(payload.windowEnd) + ' (full retention) · ' +
+    eligible.length.toLocaleString('en-GB') + ' eligible trip(s), ' +
+    cancelled.length.toLocaleString('en-GB') + ' cancelled trip(s) excluded · all times Sweden local time (Europe/Stockholm)';
+
+  var stats = [
+    { label: 'Eligible trips', value: eligible.length, sub: approxCount ? approxCount + ' using approx. delay' : '≥ 20 min at final stop' },
+    { label: 'Price deduction, cash', value: fmtSek(sumDeductionCash), sub: 'sum, if all claimed as cash' },
+    { label: 'Price deduction, voucher', value: fmtSek(sumDeductionVoucher), sub: '+50% bonus (värdekod)' },
+    { label: 'Car reimbursement', value: fmtSek(sumCarCash), sub: '2.5 kr/km, capped per trip' },
+    { label: 'Cancelled, excluded', value: cancelled.length, sub: 'not in the totals above', crit: cancelled.length > 0 },
+  ];
+  document.getElementById('statStrip').innerHTML = stats.map(function (s) {
+    return '<div class="stat' + (s.crit ? ' crit' : '') + '"><div class="label">' + esc(s.label) + '</div>' +
+      '<div class="value">' + s.value + '</div><div class="sub">' + esc(s.sub) + '</div></div>';
+  }).join('');
+
+  document.getElementById('rulesPanel').innerHTML = [
+    ['Sommarbiljett price', C.ticketPriceSek + ' kr'],
+    ['Single-trip price (÷' + C.divisor + ')', C.singleTripPriceSek.toFixed(3) + ' kr'],
+    ['20–39 min delay', '50% price deduction'],
+    ['40–59 min delay', '75% price deduction'],
+    ['60+ min delay', '100% price deduction'],
+    ['Voucher bonus', '+' + Math.round((C.voucherBonus - 1) * 100) + '% (price deduction only)'],
+    ['Car reimbursement rate', C.carRateSekPerKm + ' kr/km'],
+    ['Car/taxi max per trip', C.altTransportCapSek + ' kr'],
+  ].map(function (pair) {
+    return '<div class="cell"><dt>' + esc(pair[0]) + '</dt><dd>' + esc(pair[1]) + '</dd></div>';
+  }).join('');
+
+  var logBody = document.getElementById('logBody');
+  var logCount = document.getElementById('logCount');
+  var qEl = document.getElementById('q');
+  var tierFilterEl = document.getElementById('tierFilter');
+  var pageSizeEl = document.getElementById('pageSize');
+  var prevBtn = document.getElementById('prevBtn');
+  var nextBtn = document.getElementById('nextBtn');
+  var pageInfo = document.getElementById('pageInfo');
+
+  var sortKey = 'date';
+  var sortDir = -1;
+  var page = 0;
+
+  function tierClass(r) {
+    if (r.calc === 'cancelled') return 'canceled';
+    if (r.deductionPct >= 100) return 'tier100';
+    if (r.deductionPct >= 75) return 'tier75';
+    return 'tier50';
+  }
+
+  function matchesFilters(r) {
+    var tf = tierFilterEl.value;
+    if (tf === 'cancelled' && r.calc !== 'cancelled') return false;
+    if (tf && tf !== 'cancelled' && String(r.deductionPct) !== tf) return false;
+    var q = qEl.value.trim().toLowerCase();
+    if (q) {
+      var hay = [r.line, r.tripNumber, r.dest].join(' ').toLowerCase();
+      if (hay.indexOf(q) === -1) return false;
+    }
+    return true;
+  }
+
+  function renderLog() {
+    var scoped = data.filter(matchesFilters);
+    scoped.sort(function (a, b) {
+      var av = a[sortKey], bv = b[sortKey];
+      if (av === null || av === undefined) av = -Infinity;
+      if (bv === null || bv === undefined) bv = -Infinity;
+      if (av < bv) return -1 * sortDir;
+      if (av > bv) return 1 * sortDir;
+      return 0;
+    });
+
+    var pageSize = parseInt(pageSizeEl.value, 10);
+    var pages = Math.max(1, Math.ceil(scoped.length / pageSize));
+    if (page >= pages) page = pages - 1;
+    if (page < 0) page = 0;
+    var slice = scoped.slice(page * pageSize, page * pageSize + pageSize);
+
+    logCount.textContent = scoped.length.toLocaleString('en-GB') + ' trip(s)';
+
+    logBody.innerHTML = slice.map(function (r) {
+      if (r.calc === 'cancelled') {
+        return '<tr>' +
+          '<td class="num">' + fmtDate(r.date) + '</td>' +
+          '<td><span class="line-badge">' + esc(r.line) + '</span></td>' +
+          '<td>' + esc(r.vehicleType) + '</td>' +
+          '<td class="num">' + esc(r.tripNumber || '–') + '</td>' +
+          '<td>' + esc(r.dest || '–') + '</td>' +
+          '<td class="num">' + fmtKm(r.distanceKm) + '</td>' +
+          '<td colspan="4"><span class="chip canceled">Cancelled — not calculated</span></td>' +
+          '</tr>';
+      }
+      return '<tr>' +
+        '<td class="num">' + fmtDate(r.date) + '</td>' +
+        '<td><span class="line-badge">' + esc(r.line) + '</span></td>' +
+        '<td>' + esc(r.vehicleType) + '</td>' +
+        '<td class="num">' + esc(r.tripNumber || '–') + '</td>' +
+        '<td>' + esc(r.dest || '–') + '</td>' +
+        '<td class="num">' + fmtKm(r.distanceKm) + '</td>' +
+        '<td class="num">' + r.delayUsedMin.toFixed(1) + ' min' + (r.delayApprox ? ' <span class="chip approx">approx.</span>' : '') + '</td>' +
+        '<td><span class="chip ' + tierClass(r) + '">' + r.deductionPct + '%</span></td>' +
+        '<td><div class="option"><span class="cash">' + fmtSek(r.deductionCash) + ' cash</span><span class="voucher">' + fmtSek(r.deductionVoucher) + ' voucher</span></div></td>' +
+        '<td>' + (r.carCash ? '<div class="option"><span class="cash">' + fmtSek(r.carCash) + ' cash</span><span class="voucher">' + fmtSek(r.carVoucher) + ' voucher</span></div>' : '<span class="hint">no distance data</span>') + '</td>' +
+        '</tr>';
+    }).join('') + (slice.length === 0 ? '<tr><td colspan="10" class="hint" style="padding:20px 12px;">No trips match the current filters.</td></tr>' : '');
+
+    document.querySelectorAll('#logTable thead th.sortable .arrow').forEach(function (arrow) {
+      var th = arrow.closest('th');
+      arrow.textContent = th.dataset.key === sortKey ? (sortDir === 1 ? '▲' : '▼') : '';
+    });
+    pageInfo.textContent = 'Page ' + (page + 1) + ' / ' + pages;
+    prevBtn.disabled = page <= 0;
+    nextBtn.disabled = page >= pages - 1;
+  }
+
+  document.querySelectorAll('#logTable thead th.sortable').forEach(function (th) {
+    th.addEventListener('click', function () {
+      var key = th.dataset.key;
+      if (sortKey === key) { sortDir *= -1; } else { sortKey = key; sortDir = key === 'date' ? -1 : 1; }
+      renderLog();
+    });
+  });
+  qEl.addEventListener('input', function () { page = 0; renderLog(); });
+  tierFilterEl.addEventListener('change', function () { page = 0; renderLog(); });
+  pageSizeEl.addEventListener('change', function () { page = 0; renderLog(); });
+  prevBtn.addEventListener('click', function () { page--; renderLog(); });
+  nextBtn.addEventListener('click', function () { page++; renderLog(); });
+
+  renderLog();
+})();
+</script>
+</body>
+</html>

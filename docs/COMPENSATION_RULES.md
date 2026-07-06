@@ -197,8 +197,23 @@ decisions (as of the second round, same day — the user revised #1, #2 and
    compensation feature — see `sommarticket_valid` in
    [DATA_DICTIONARY.md](DATA_DICTIONARY.md). **Implemented.**
 
-**Not yet built:** an actual compensation-amount calculation (SEK values
-per the price-deduction tiers and car/taxi reimbursement caps above) — the
-underlying data (final-stop delay, max delay, distance, vehicle type,
-Sommarbiljett scope) is now all in place for it, but the calculation itself
-hasn't been wired up yet.
+**Implemented (2026-07-06):** `src/build_compensation.py` generates
+`compensation.html`, an illustrative estimate of price-deduction (section 3)
+and car-reimbursement (section 4) compensation per eligible trip, across the
+full 45-day retention window. Known simplifications, by design:
+- Uses the Sommarbiljett's 40-single-trip divisor only — no other ticket
+  type is modeled, since the whole project is scoped to Sommarbiljett-valid
+  trips.
+- No documented voucher-code bonus was found for car reimbursement (only
+  for price deduction, section 3), so cash and voucher amounts are shown
+  as equal for the car-reimbursement path rather than assuming a bonus
+  that isn't sourced.
+- Taxi and other-operator reimbursement (also section 4) are not modeled —
+  only car, since that's what the user asked for specifically.
+- Meal/refreshment compensation (section 5, trains ≥150 km + 60 min delay)
+  is documented above but not computed — out of the scope that was asked
+  for.
+- Fully cancelled trips are listed on the page but excluded from the
+  calculation — the rules don't specify a clear formula for a trip that
+  never ran, so estimating one would be inventing a number, not measuring
+  one.

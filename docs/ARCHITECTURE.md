@@ -135,7 +135,8 @@ routine delays (ordinary traffic congestion) have no published alert though
 - The commit step only commits `data/static_index.sqlite`, and only when it
   actually changed (weekly, not every 2h) — delay data itself lives in
   Postgres, not git, so there's no git-history growth from it.
-- Builds the dashboard and deploys it to GitHub Pages every run.
+- Builds the dashboard and the compensation-estimate page, and deploys both
+  to GitHub Pages every run.
 
 **`housekeeping.yml`** (daily): runs the coverage check for yesterday, then
 deletes everything older than 45 days.
@@ -169,3 +170,26 @@ Both the trend and the log are scoped to `sommarticket_valid = true` only —
 Sommarbiljetten doesn't cover the Ven ferry or Öresund/Denmark-bound trips,
 so those never show up in the dashboard at all, not just in a future
 compensation calculation.
+
+## Compensation estimate (`src/build_compensation.py`)
+
+A second page (`compensation.html`), built on every scan alongside the main
+dashboard. Reuses `fetch_detail_rows()` from `build_dashboard.py` — same
+per-trip data, but queried across the **full 45-day retention window**
+(not just the last few days) since the point is catching claimable delays
+before Skånetrafiken's 2-month application deadline passes.
+
+Filters to trips delayed ≥20 minutes at the final stop (falling back to the
+largest observed delay, flagged as approximate, when the final stop was
+never captured), then computes two independent, non-additive estimates per
+the rules in [COMPENSATION_RULES.md](COMPENSATION_RULES.md):
+- **Price deduction** — tiered % (50/75/100%) of the Sommarbiljett's
+  single-trip price (595 kr ÷ 40), cash or as a voucher code (+50%).
+- **Car reimbursement** — `distance_km × 2.5 kr/km`, capped at the
+  published per-trip maximum (2,960 kr from 2026-01-01). No voucher bonus
+  is documented for this path, so cash and voucher are shown as equal —
+  not an oversight.
+
+Fully cancelled trips are listed (for visibility) but excluded from the
+calculation — the rules don't specify a formula for a trip that never ran
+at all. All constants live in `config.py`, next to `route_type_label()`.
