@@ -153,7 +153,7 @@
   .stat .sub { font-size: 12px; color: var(--ink-faint); font-family: var(--mono); }
   .stat.crit .value { color: var(--red); }
   .stat.ok .value { color: var(--green); }
-  #myClaimsStats { grid-template-columns: repeat(5, 1fr); }
+  #myClaimsStats, #checkedOutStats { grid-template-columns: repeat(4, 1fr); }
 
   section { display: flex; flex-direction: column; gap: 12px; }
 
@@ -456,7 +456,7 @@
   :focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
 
   @media (max-width: 900px) {
-    .stats, #myClaimsStats { grid-template-columns: repeat(2, 1fr); }
+    .stats, #myClaimsStats, #checkedOutStats { grid-template-columns: repeat(2, 1fr); }
   }
   @media (prefers-reduced-motion: reduce) {
     * { transition: none !important; animation: none !important; }
@@ -473,7 +473,7 @@
       <a href="claims.html" class="current">Reasonable claim chains</a>
     </nav>
     <div class="eyebrow">Skånetrafiken · Sommarbiljetten scope</div>
-    <h1>Is this a travelable set of claims?</h1>
+    <h1>Build a travelable set of claims, then file them</h1>
     <div class="meta-line" id="metaLine">loading…</div>
   </header>
 
@@ -501,6 +501,7 @@
       <h2>Checked out — preparing your forms</h2>
       <span class="hint">Pick compensation type + payout for each, then tell Claude to fill the form. Once it's printed, signed, and in the mail, confirm below.</span>
     </div>
+    <div class="stats" id="checkedOutStats"></div>
     <div id="checkedOutList"></div>
   </section>
 
@@ -863,7 +864,7 @@
         '</span>';
     }
     var isOpen = expandedLegs.has(key);
-    var toggleHtml = '<button type="button" class="expand-toggle" data-key="' + esc(key) + '" title="Show per-stop detail">' + (isOpen ? '▼' : '▶') + '</button>';
+    var toggleHtml = '<button type="button" class="expand-toggle" data-key="' + esc(key) + '" title="Show per-stop detail" aria-label="' + (isOpen ? 'Hide' : 'Show') + ' per-stop detail" aria-expanded="' + isOpen + '">' + (isOpen ? '▼' : '▶') + '</button>';
     var stopsPanel = isOpen ? renderStopsPanel(r) : '';
     return '<div class="chain-leg">' + toggleHtml + selectHtml + trackHtml + stopsPanel + '</div>';
   }
@@ -1035,7 +1036,10 @@
   // Stage 2: checked out, forms being prepared. Pick compensation/payout
   // per leg here, then confirm mailing once the real paper form is
   // actually in an envelope — that confirmation is what promotes it to
-  // the archive, not just ticking a box.
+  // the archive, not just ticking a box. Regrouped through buildChains()
+  // (not just dumped per-day) so a day with two disconnected checked-out
+  // claims still shows the gap warning instead of silently losing it —
+  // "Your claim cart" and "Suggested reasonable chains" both do this too.
   function renderCheckedOut() {
     var out = allRows.filter(function (r) { var t = trackingFor(rowKey(r)); return t.claimed && !t.mailed; });
     var section = document.getElementById('checkedOutSection');
@@ -1044,10 +1048,39 @@
     var byDate = {};
     out.forEach(function (r) { (byDate[r.date] = byDate[r.date] || []).push(r); });
     var dates = Object.keys(byDate).sort().reverse();
+
+    var totalCash = 0, totalVoucher = 0, gapCount = 0;
     document.getElementById('checkedOutList').innerHTML = dates.map(function (d) {
-      return '<div class="day-group"><h3 class="day-heading">' + fmtDate(d) + '</h3>' +
-        chainHtml(byDate[d], { tracking: true, mailButton: true }) +
-        '</div>';
+      var segs = buildChains(byDate[d]);
+      segs = segs.slice().sort(function (a, b) {
+        var at = a[0].originTimeIso || a[0].destTimeIso || '';
+        var bt = b[0].originTimeIso || b[0].destTimeIso || '';
+        return at < bt ? -1 : at > bt ? 1 : 0;
+      });
+      var parts = ['<div class="day-group"><h3 class="day-heading">' + fmtDate(d) +
+        (segs.length > 1
+          ? ' <span class="chip canceled">' + (segs.length - 1) + ' unexplained gap(s)</span>'
+          : ' <span class="chip ok">consistent day</span>') +
+        '</h3>'];
+      segs.forEach(function (seg, i) {
+        if (i > 0) { gapCount++; parts.push(gapHtml(segs[i - 1][segs[i - 1].length - 1], seg[0])); }
+        parts.push(chainHtml(seg, { tracking: true, mailButton: true }));
+      });
+      parts.push('</div>');
+      return parts.join('');
+    }).join('');
+
+    out.forEach(function (r) {
+      if (r.calc === 'eligible') { totalCash += r.deductionCash; totalVoucher += r.deductionVoucher; }
+    });
+    document.getElementById('checkedOutStats').innerHTML = [
+      { label: 'Checked out', value: out.length, sub: dates.length + ' day(s)' },
+      { label: 'Price deduction, cash', value: fmtSek(totalCash), sub: 'if all claimed as cash' },
+      { label: 'Price deduction, voucher', value: fmtSek(totalVoucher), sub: '+50% bonus (värdekod)' },
+      { label: 'Unexplained gaps', value: gapCount, sub: gapCount ? 'be ready to explain these' : 'fully consistent', crit: gapCount > 0 },
+    ].map(function (s) {
+      return '<div class="stat' + (s.crit ? ' crit' : '') + '"><div class="label">' + esc(s.label) + '</div>' +
+        '<div class="value">' + s.value + '</div><div class="sub">' + esc(s.sub) + '</div></div>';
     }).join('');
   }
 

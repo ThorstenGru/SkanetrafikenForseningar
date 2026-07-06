@@ -524,3 +524,36 @@ trip is ever shown) without the irreversible cost of deleting history that
 also serves this project's other two purposes (systemic-complaint
 evidence, personal stats — see README). Revisit only on an explicit,
 specific instruction to actually delete data, not a "maybe."
+
+## 16. Review pass, 2026-07-06 — bugs found and fixed
+
+Requested by the user after going productive: a real review of
+claims.html (by far the most-iterated page this session), not just a
+"looks fine" assurance. Two genuine issues found and fixed, not cosmetic:
+
+- **`#myClaimsStats` grid was still 5 columns** after the cart/checkout
+  split reduced "Your claim cart" to 4 stats (the "Claims started" stat
+  moved to its own section) — left an empty gap in the grid on desktop
+  widths. Fixed to 4, added the same class to the new
+  `#checkedOutStats` block.
+- **"Checked out" section didn't detect chain gaps.** It rendered a
+  day's checked-out claims as one flat list rather than running them
+  through `buildChains()` like "Your claim cart" and "Suggested
+  reasonable chains" both do — so two disconnected checked-out claims on
+  the same day silently lost the "how did you get from X to Y" warning
+  that's the whole point of this project. Fixed by regrouping through
+  `buildChains()` and rendering the same gap warnings, plus added a
+  totals/gap-count stats row that section didn't have before.
+
+Also: added `aria-label`/`aria-expanded` to the stop-detail expand
+toggle (icon-only button, no accessible name before this), and reworded
+the H1 from "Is this a travelable set of claims?" (accurate when the page
+was purely a consistency-checker) to "Build a travelable set of claims,
+then file them" (accurate now that it also drives the whole cart →
+checkout → mailed lifecycle).
+
+**Scope note:** this was a direct, manual review (reading the file,
+reasoning about it, fixing what was found) rather than delegating to a
+research/review agent — the same turn's earlier legal-research request
+fanned out into 30+ sub-agents and hit the session's usage limit, so a
+contained, single-actor review was the deliberately safer choice here.
