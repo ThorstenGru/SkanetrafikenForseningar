@@ -127,13 +127,21 @@ def _pick_nearest(snapshots, target_utc, tolerance_seconds):
 
 
 def _target_marks_utc(day, interval_hours):
-    """Local Europe/Stockholm poll marks for one calendar day, as UTC datetimes."""
+    """Local Europe/Stockholm poll marks for one calendar day, as UTC datetimes.
+
+    Works in whole minutes internally — datetime()'s hour/minute args must
+    be ints, so a fractional interval_hours (e.g. 0.25 for 15-min marks,
+    matching the live scanner's current cadence) can't be accumulated as a
+    float hour count directly without eventually handing datetime() a
+    non-integer hour."""
     marks = []
-    hour = 0
-    while hour < 24:
-        local = datetime(day.year, day.month, day.day, hour, 0, tzinfo=config.LOCAL_TZ)
+    interval_minutes = interval_hours * 60
+    total_minutes = 0.0
+    while total_minutes < 24 * 60:
+        h, m = divmod(int(round(total_minutes)), 60)
+        local = datetime(day.year, day.month, day.day, h, m, tzinfo=config.LOCAL_TZ)
         marks.append(local.astimezone(timezone.utc))
-        hour += interval_hours
+        total_minutes += interval_minutes
     return marks
 
 
@@ -192,7 +200,7 @@ def backfill_day(day, interval_hours, trip_meta, stops, cur):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--days", type=int, default=32, help="How many full days back to backfill (ending yesterday).")
-    parser.add_argument("--interval-hours", type=int, default=2, help="Sampling cadence, matching the live scanner.")
+    parser.add_argument("--interval-hours", type=float, default=2, help="Sampling cadence, matching the live scanner. Accepts fractions (e.g. 0.25 for 15 min).")
     parser.add_argument("--start", default=None, help="YYYY-MM-DD, overrides --days")
     parser.add_argument("--end", default=None, help="YYYY-MM-DD, defaults to yesterday")
     args = parser.parse_args()
@@ -205,7 +213,7 @@ def main():
         end = today - timedelta(days=1)
         start = end - timedelta(days=args.days - 1)
 
-    print("Backfilling %s..%s (every %dh, Europe/Stockholm)" % (start, end, args.interval_hours))
+    print("Backfilling %s..%s (every %gh, Europe/Stockholm)" % (start, end, args.interval_hours))
 
     static_index.ensure_index()
     static_conn = sqlite3.connect(config.STATIC_INDEX_PATH)
