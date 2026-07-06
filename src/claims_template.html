@@ -372,6 +372,36 @@
   #trackingStatus.ok { color: var(--green); }
   #trackingStatus.err { color: var(--red); font-weight: 600; }
 
+  .filed-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    background: var(--green-dim);
+    border: 1px solid var(--green);
+    border-radius: 3px;
+    padding: 8px 12px;
+    font-size: 12.5px;
+    margin-bottom: 6px;
+  }
+  .filed-row .claim-num { font-family: var(--mono); color: var(--ink); }
+
+  .claim-choice {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11.5px;
+    color: var(--ink-dim);
+  }
+  .claim-choice select {
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 3px 6px;
+    font-size: 11.5px;
+    color: var(--ink);
+  }
+
   .gap-warning {
     background: var(--red-dim);
     border: 1px solid #f3c9c2;
@@ -448,6 +478,14 @@
     application individually and can require further proof for unusual or frequent claims
     (see docs/COMPENSATION_RULES.md §7).
   </div>
+
+  <section id="alreadyFiledSection" style="display:none;">
+    <div class="section-head">
+      <h2>Already filed — don't claim these again</h2>
+      <span class="hint">Every trip you've marked "Claim started", pulled from the same synced record as below</span>
+    </div>
+    <div id="alreadyFiledList"></div>
+  </section>
 
   <section>
     <div class="section-head">
@@ -568,11 +606,33 @@
     return h;
   }
 
-  function trackingFor(key) { return tracking[key] || { claimed: false, claimNumber: '' }; }
+  // The claim-initiation "wizard": once a leg is marked Claim started,
+  // these two choices are collected right there and saved alongside it —
+  // all the non-personal data the claim needs is gathered in one place
+  // before anyone touches the actual form.
+  var COMPENSATION_TYPE_OPTIONS = [
+    ['prisavdrag', 'Prisavdrag (price deduction)'],
+    ['taxi', 'Taxi reimbursement'],
+    ['mileage', 'Mileage (own car)'],
+  ];
+  var PAYOUT_METHOD_OPTIONS = [
+    ['voucher_sms', 'Värdekod via SMS'],
+    ['voucher_email', 'Värdekod via e-post'],
+    ['cash', 'Cash (needs your own bank details on the form)'],
+  ];
+  function claimChoiceSelectHtml(key, field, current, options, placeholder) {
+    var opts = '<option value="">' + esc(placeholder) + '</option>' + options.map(function (o) {
+      return '<option value="' + esc(o[0]) + '"' + (current === o[0] ? ' selected' : '') + '>' + esc(o[1]) + '</option>';
+    }).join('');
+    return '<span class="claim-choice"><select class="claim-choice-select" data-key="' + esc(key) + '" data-field="' + field + '">' + opts + '</select></span>';
+  }
+
+  var TRACKING_DEFAULTS = { claimed: false, claimNumber: '', compensationType: '', payoutMethod: '' };
+  function trackingFor(key) { return tracking[key] || TRACKING_DEFAULTS; }
 
   function loadTracking() {
     if (!TRACKING_URL) { setStatus('Supabase not configured for this build', 'err'); return Promise.resolve(); }
-    return fetch(TRACKING_URL + '?select=trip_id,trip_start_date,claimed,claim_number', { headers: sbHeaders(false) })
+    return fetch(TRACKING_URL + '?select=trip_id,trip_start_date,claimed,claim_number,compensation_type,payout_method', { headers: sbHeaders(false) })
       .then(function (resp) {
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         return resp.json();
@@ -580,7 +640,12 @@
       .then(function (dbRows) {
         dbRows.forEach(function (row) {
           var key = row.trip_id + '|' + row.trip_start_date.replace(/-/g, '');
-          tracking[key] = { claimed: row.claimed, claimNumber: row.claim_number || '' };
+          tracking[key] = {
+            claimed: row.claimed,
+            claimNumber: row.claim_number || '',
+            compensationType: row.compensation_type || '',
+            payoutMethod: row.payout_method || '',
+          };
         });
         setStatus('synced with Supabase', 'ok');
       })
@@ -595,7 +660,7 @@
   // this is personal record-keeping, not a transactional system.
   function saveTrackingRow(r, patch) {
     var key = rowKey(r);
-    tracking[key] = Object.assign({ claimed: false, claimNumber: '' }, trackingFor(key), patch);
+    tracking[key] = Object.assign({}, TRACKING_DEFAULTS, trackingFor(key), patch);
     if (!TRACKING_URL) { setStatus('Supabase not configured for this build', 'err'); return; }
     setStatus('saving…', '');
     fetch(TRACKING_URL, {
@@ -606,6 +671,8 @@
         trip_start_date: isoDate(r.date),
         claimed: tracking[key].claimed,
         claim_number: tracking[key].claimNumber,
+        compensation_type: tracking[key].compensationType || null,
+        payout_method: tracking[key].payoutMethod || null,
       }]),
     }).then(function (resp) {
       if (!resp.ok) return resp.text().then(function (t) { throw new Error('HTTP ' + resp.status + ': ' + t); });
@@ -740,9 +807,16 @@
     var trackHtml = '';
     if (opts.tracking) {
       var t = trackingFor(key);
+      var choicesHtml = '';
+      if (t.claimed) {
+        choicesHtml =
+          claimChoiceSelectHtml(key, 'compensationType', t.compensationType, COMPENSATION_TYPE_OPTIONS, 'Compensation…') +
+          claimChoiceSelectHtml(key, 'payoutMethod', t.payoutMethod, PAYOUT_METHOD_OPTIONS, 'Payout…');
+      }
       trackHtml = '<span class="claim-track">' +
         '<label class="claimed-label"><input type="checkbox" class="claimed-check" data-key="' + esc(key) + '"' + (t.claimed ? ' checked' : '') + '> Claim started</label>' +
         '<input type="text" class="claim-number-input" data-key="' + esc(key) + '" placeholder="Skånetrafiken claim #" value="' + esc(t.claimNumber) + '">' +
+        choicesHtml +
         '</span>';
     }
     var isOpen = expandedLegs.has(key);
@@ -909,7 +983,29 @@
       '<p class="hint">No claims selected yet — tick the legs that were actually yours in the section above.</p>';
   }
 
-  function renderAll() { renderChainDays(); renderMyClaims(); }
+  // Prevents re-filing: every trip flagged "Claim started" anywhere in the
+  // data, regardless of the current day filter or selection state, so it
+  // stays visible even after you move on to a different day's chains.
+  function renderAlreadyFiled() {
+    var filed = allRows.filter(function (r) { return trackingFor(rowKey(r)).claimed; });
+    var section = document.getElementById('alreadyFiledSection');
+    if (!filed.length) { section.style.display = 'none'; return; }
+    section.style.display = '';
+    document.getElementById('alreadyFiledList').innerHTML = filed.map(function (r) {
+      var t = trackingFor(rowKey(r));
+      var compLabel = (COMPENSATION_TYPE_OPTIONS.filter(function (o) { return o[0] === t.compensationType; })[0] || [null, '–'])[1];
+      var payoutLabel = (PAYOUT_METHOD_OPTIONS.filter(function (o) { return o[0] === t.payoutMethod; })[0] || [null, '–'])[1];
+      return '<div class="filed-row">' +
+        '<span class="line-badge">' + esc(r.line) + '</span>' +
+        '<span class="num">' + fmtDate(r.date) + '</span>' +
+        '<span>' + esc(r.originName || '?') + '<span class="dest-arrow">→</span>' + esc(r.dest || '?') + '</span>' +
+        '<span>' + esc(compLabel) + ' · ' + esc(payoutLabel) + '</span>' +
+        '<span class="claim-num">' + (t.claimNumber ? 'Claim #' + esc(t.claimNumber) : 'no claim # recorded yet') + '</span>' +
+        '</div>';
+    }).join('');
+  }
+
+  function renderAll() { renderChainDays(); renderMyClaims(); renderAlreadyFiled(); }
 
   document.addEventListener('change', function (e) {
     if (e.target.classList.contains('leg-check')) {
@@ -922,6 +1018,14 @@
       var ck = e.target.dataset.key;
       saveTrackingRow(rowsByKey[ck], { claimed: e.target.checked });
       renderMyClaims();
+      renderAlreadyFiled();
+      return;
+    }
+    if (e.target.classList.contains('claim-choice-select')) {
+      var sk = e.target.dataset.key, field = e.target.dataset.field, patch = {};
+      patch[field] = e.target.value;
+      saveTrackingRow(rowsByKey[sk], patch);
+      renderAlreadyFiled();
     }
   });
   // Plain 'input' (not 'change'/full re-render), debounced, so typing a
@@ -958,7 +1062,7 @@
   dayFilterEl.addEventListener('change', renderChainDays);
 
   renderAll();
-  loadTracking().then(renderMyClaims);
+  loadTracking().then(renderAll);
 })();
 </script>
 </body>

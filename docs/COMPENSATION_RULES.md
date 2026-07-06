@@ -441,3 +441,42 @@ The ticket's own ID (for use when actually filing claims, e.g.
 pre-filling a claim form) is tracked in the user's private assistant
 memory, not in this repo — it has no role in any build script and isn't
 needed by anything the app itself computes or displays.
+
+## 14. Claim-initiation wizard + why personal details never reach Supabase
+
+Requested by the user 2026-07-06: collect everything a claim needs (which
+trip, compensation type, payout method) as a guided step before actually
+filling out Skånetrafiken's form, and give an "already filed" overview so
+the same trip never gets claimed twice.
+
+**What's built:** ticking "Claim started" on a leg in "Your possible claim
+list" reveals two dropdowns — compensation type (prisavdrag / taxi /
+mileage) and payout method (värdekod SMS / värdekod e-post / cash) — saved
+to `claim_tracking` alongside the existing claimed flag and claim number
+(`src/migrations/002_claim_choices.sql` added the two columns). A new
+"Already filed" section at the top of the page lists every trip flagged
+this way, regardless of the current day filter, specifically so a repeat
+visit doesn't risk re-claiming the same delay.
+
+**The line that matters: personal details never touch Supabase, ever.**
+`claim_tracking`'s SELECT policy is `USING (true)` — open to anyone with
+the anon key, which is itself public (embedded in the page). That's an
+acceptable trade-off for a trip identifier + a boolean + a claim number
+(see §12), but would be a serious problem for a name, address, or
+personnummer. So the two new columns are deliberately limited to
+low-cardinality enums that reveal nothing about the person — and the
+actual claim form's personal-details section (name, address, mobile,
+email, and especially personnummer) is filled locally, by hand or by
+Claude working locally, and **never stored in this repo or in Supabase**.
+If cross-device access to the filled form itself is ever needed, the
+right next step is Supabase Storage behind real Supabase Auth (per-user
+RLS), not an extension of the current anon-key model — deliberately not
+built now, since it's a meaningfully larger lift than this project's
+single-user scope has needed so far.
+
+**Hard line Claude holds regardless of instruction:** personnummer and any
+bank/IBAN/BIC details are never typed into the claim form by Claude, even
+when explicitly told sensitivity doesn't matter — the same category as not
+handling passwords or payment credentials on someone's behalf. Choosing a
+voucher payout (SMS/e-post) instead of cash sidesteps the bank-details
+case entirely, which is why it's the default recommendation here.
