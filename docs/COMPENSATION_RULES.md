@@ -480,3 +480,47 @@ when explicitly told sensitivity doesn't matter — the same category as not
 handling passwords or payment credentials on someone's behalf. Choosing a
 voucher payout (SMS/e-post) instead of cash sidesteps the bank-details
 case entirely, which is why it's the default recommendation here.
+
+## 15. Cart → checkout → mailed lifecycle
+
+Requested by the user 2026-07-06 (shopping-cart language): a claim moves
+through three explicit stages rather than one flat "claimed" flag.
+
+1. **Cart** — a leg ticked in "Your claim cart" (client-side `selected`
+   state, not persisted — same as before). Shown with just the trip info,
+   no claim-processing UI yet.
+2. **Checked out** (`claimed = true`) — a bulk "Check out N claims" button
+   moves every cart item here at once. This is where compensation type and
+   payout method get picked (per leg), and where the claim number gets
+   recorded once Skånetrafiken issues one. Unticking "Claim started" here
+   moves a leg straight back to the cart — checkout isn't a one-way door
+   until the next stage.
+3. **Archived** (`mailed = true`) — reached only by clicking "Mark printed
+   & mailed", which asks the literal confirmation the user wanted: *"All
+   forms printed and on the go?"* This is the one genuinely one-way
+   transition (no UI to undo it, matching that it represents something
+   that actually already happened in the physical world) and is what
+   finally removes a claim from the "still needs a decision" set into
+   the reference archive that prevents re-filing.
+
+`003_claim_mailed.sql` added `mailed`/`mailed_at` — still no personal
+content, same reasoning as `002_claim_choices.sql`.
+
+**What this page cannot do, restated plainly:** it cannot guarantee
+Skånetrafiken will approve any claim. It checks internal consistency
+against their own published rules (delay thresholds, Sommarbiljett
+validity and purchase-date cutoff, chain/gap consistency, their own
+"reasonable transfer time" definition) — that's the strongest claim of
+correctness this project can honestly make. Their decision depends on
+data and judgment this project doesn't have access to. Asked directly by
+the user whether claims can be "sure to be successful": no — that
+guarantee doesn't exist for anyone to give, including Skånetrafiken's own
+staff before they've reviewed a specific case.
+
+**On "empty all tables for a clean start":** considered and declined. The
+purchase-date cutoff (§13) already excludes ineligible data at the
+application layer, which achieves the same practical goal (no ineligible
+trip is ever shown) without the irreversible cost of deleting history that
+also serves this project's other two purposes (systemic-complaint
+evidence, personal stats — see README). Revisit only on an explicit,
+specific instruction to actually delete data, not a "maybe."

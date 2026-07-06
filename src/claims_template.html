@@ -402,6 +402,15 @@
     color: var(--ink);
   }
 
+  .mail-btn {
+    padding: 4px 10px !important;
+    font-size: 10.5px !important;
+    background: var(--green-dim) !important;
+    border-color: var(--green) !important;
+    color: var(--green) !important;
+  }
+  .mail-btn:hover { background: var(--green) !important; color: #fff !important; }
+
   .gap-warning {
     background: var(--red-dim);
     border: 1px solid #f3c9c2;
@@ -481,10 +490,18 @@
 
   <section id="alreadyFiledSection" style="display:none;">
     <div class="section-head">
-      <h2>Already filed — don't claim these again</h2>
-      <span class="hint">Every trip you've marked "Claim started", pulled from the same synced record as below</span>
+      <h2>Archived — already claimed, don't file these again</h2>
+      <span class="hint">Forms confirmed printed and in the mail — the final stage, pulled from the same synced record as below</span>
     </div>
     <div id="alreadyFiledList"></div>
+  </section>
+
+  <section id="checkedOutSection" style="display:none;">
+    <div class="section-head">
+      <h2>Checked out — preparing your forms</h2>
+      <span class="hint">Pick compensation type + payout for each, then tell Claude to fill the form. Once it's printed, signed, and in the mail, confirm below.</span>
+    </div>
+    <div id="checkedOutList"></div>
   </section>
 
   <section>
@@ -503,10 +520,13 @@
 
   <section>
     <div class="section-head">
-      <h2>Your possible claim list</h2>
-      <span class="hint">Recomputed live from the checkboxes below — this is what an investigator would actually see. Mark "Claim started" and record Skånetrafiken's claim number once you file — <span id="trackingStatus">loading saved tracking…</span></span>
+      <h2>Your claim cart</h2>
+      <span class="hint">Tick legs below to add them here, then check out when you're ready to start the paperwork — <span id="trackingStatus">loading saved tracking…</span></span>
     </div>
     <div class="stats" id="myClaimsStats"></div>
+    <div class="controls">
+      <button class="link-btn" id="checkoutBtn" disabled>Check out 0 claims</button>
+    </div>
     <div id="myClaimsDays"></div>
   </section>
 
@@ -638,12 +658,15 @@
     return '<span class="claim-choice"><select class="claim-choice-select" data-key="' + esc(key) + '" data-field="' + field + '">' + opts + '</select></span>';
   }
 
-  var TRACKING_DEFAULTS = { claimed: false, claimNumber: '', compensationType: '', payoutMethod: '' };
+  // Claim lifecycle: cart (selected, not yet claimed) -> checked out
+  // (claimed=true — forms being prepared) -> archived (mailed=true —
+  // physically printed, signed, and sent). See COMPENSATION_RULES.md §15.
+  var TRACKING_DEFAULTS = { claimed: false, claimNumber: '', compensationType: '', payoutMethod: '', mailed: false };
   function trackingFor(key) { return tracking[key] || TRACKING_DEFAULTS; }
 
   function loadTracking() {
     if (!TRACKING_URL) { setStatus('Supabase not configured for this build', 'err'); return Promise.resolve(); }
-    return fetch(TRACKING_URL + '?select=trip_id,trip_start_date,claimed,claim_number,compensation_type,payout_method', { headers: sbHeaders(false) })
+    return fetch(TRACKING_URL + '?select=trip_id,trip_start_date,claimed,claim_number,compensation_type,payout_method,mailed', { headers: sbHeaders(false) })
       .then(function (resp) {
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         return resp.json();
@@ -656,6 +679,7 @@
             claimNumber: row.claim_number || '',
             compensationType: row.compensation_type || '',
             payoutMethod: row.payout_method || '',
+            mailed: !!row.mailed,
           };
         });
         setStatus('synced with Supabase', 'ok');
@@ -672,9 +696,9 @@
   function saveTrackingRow(r, patch) {
     var key = rowKey(r);
     tracking[key] = Object.assign({}, TRACKING_DEFAULTS, trackingFor(key), patch);
-    if (!TRACKING_URL) { setStatus('Supabase not configured for this build', 'err'); return; }
+    if (!TRACKING_URL) { setStatus('Supabase not configured for this build', 'err'); return Promise.resolve(); }
     setStatus('saving…', '');
-    fetch(TRACKING_URL, {
+    return fetch(TRACKING_URL, {
       method: 'POST',
       headers: Object.assign(sbHeaders(true), { 'Prefer': 'resolution=merge-duplicates' }),
       body: JSON.stringify([{
@@ -684,6 +708,10 @@
         claim_number: tracking[key].claimNumber,
         compensation_type: tracking[key].compensationType || null,
         payout_method: tracking[key].payoutMethod || null,
+        mailed: tracking[key].mailed,
+        // Only stamp mailed_at on the save that actually flips mailed on —
+        // later saves (e.g. editing a claim number) shouldn't bump it.
+        mailed_at: patch.mailed ? new Date().toISOString() : undefined,
       }]),
     }).then(function (resp) {
       if (!resp.ok) return resp.text().then(function (t) { throw new Error('HTTP ' + resp.status + ': ' + t); });
@@ -824,10 +852,14 @@
           claimChoiceSelectHtml(key, 'compensationType', t.compensationType, COMPENSATION_TYPE_OPTIONS, 'Compensation…') +
           claimChoiceSelectHtml(key, 'payoutMethod', t.payoutMethod, PAYOUT_METHOD_OPTIONS, 'Payout…');
       }
+      var mailBtnHtml = (opts.mailButton && t.claimed && !t.mailed)
+        ? '<button type="button" class="link-btn mail-btn" data-key="' + esc(key) + '">Mark printed &amp; mailed</button>'
+        : '';
       trackHtml = '<span class="claim-track">' +
         '<label class="claimed-label"><input type="checkbox" class="claimed-check" data-key="' + esc(key) + '"' + (t.claimed ? ' checked' : '') + '> Claim started</label>' +
         '<input type="text" class="claim-number-input" data-key="' + esc(key) + '" placeholder="Skånetrafiken claim #" value="' + esc(t.claimNumber) + '">' +
         choicesHtml +
+        mailBtnHtml +
         '</span>';
     }
     var isOpen = expandedLegs.has(key);
@@ -947,8 +979,12 @@
     }).join('') || '<p class="hint">No eligible trips ' + (filterVal !== '__ALL__' ? 'for this day' : 'in this window') + '.</p>';
   }
 
+  // The cart: selected legs that haven't been checked out yet. Once
+  // checked out (claimed=true) a leg moves to renderCheckedOut() instead —
+  // it disappears from here not because it was removed, but because it
+  // graduated to the next stage.
   function renderMyClaims() {
-    var chosen = allRows.filter(function (r) { return selected[rowKey(r)]; });
+    var chosen = allRows.filter(function (r) { return selected[rowKey(r)] && !trackingFor(rowKey(r)).claimed; });
     var byDate2 = {};
     chosen.forEach(function (r) { (byDate2[r.date] = byDate2[r.date] || []).push(r); });
 
@@ -968,7 +1004,7 @@
         '</h3>'];
       segs.forEach(function (seg, i) {
         if (i > 0) { gapCount++; parts.push(gapHtml(segs[i - 1][segs[i - 1].length - 1], seg[0])); }
-        parts.push(chainHtml(seg, { tracking: true }));
+        parts.push(chainHtml(seg, {}));
       });
       parts.push('</div>');
       return parts.join('');
@@ -977,28 +1013,49 @@
     chosen.forEach(function (r) {
       if (r.calc === 'eligible') { totalCash += r.deductionCash; totalVoucher += r.deductionVoucher; }
     });
-    var claimedCount = chosen.filter(function (r) { return trackingFor(rowKey(r)).claimed; }).length;
 
     document.getElementById('myClaimsStats').innerHTML = [
-      { label: 'Selected claims', value: chosen.length, sub: dates.length + ' day(s)' },
+      { label: 'In your cart', value: chosen.length, sub: dates.length + ' day(s)' },
       { label: 'Price deduction, cash', value: fmtSek(totalCash), sub: 'if all claimed as cash' },
       { label: 'Price deduction, voucher', value: fmtSek(totalVoucher), sub: '+50% bonus (värdekod)' },
       { label: 'Unexplained gaps', value: gapCount, sub: gapCount ? 'be ready to explain these' : 'fully consistent', crit: gapCount > 0 },
-      { label: 'Claims started', value: claimedCount, sub: claimedCount + ' / ' + chosen.length + ' marked filed' },
     ].map(function (s) {
       return '<div class="stat' + (s.crit ? ' crit' : '') + '"><div class="label">' + esc(s.label) + '</div>' +
         '<div class="value">' + s.value + '</div><div class="sub">' + esc(s.sub) + '</div></div>';
     }).join('');
 
     document.getElementById('myClaimsDays').innerHTML = html ||
-      '<p class="hint">No claims selected yet — tick the legs that were actually yours in the section above.</p>';
+      '<p class="hint">Cart is empty — tick the legs that were actually yours in the section below.</p>';
+
+    var btn = document.getElementById('checkoutBtn');
+    btn.textContent = 'Check out ' + chosen.length + ' claim' + (chosen.length === 1 ? '' : 's');
+    btn.disabled = chosen.length === 0;
   }
 
-  // Prevents re-filing: every trip flagged "Claim started" anywhere in the
-  // data, regardless of the current day filter or selection state, so it
-  // stays visible even after you move on to a different day's chains.
+  // Stage 2: checked out, forms being prepared. Pick compensation/payout
+  // per leg here, then confirm mailing once the real paper form is
+  // actually in an envelope — that confirmation is what promotes it to
+  // the archive, not just ticking a box.
+  function renderCheckedOut() {
+    var out = allRows.filter(function (r) { var t = trackingFor(rowKey(r)); return t.claimed && !t.mailed; });
+    var section = document.getElementById('checkedOutSection');
+    if (!out.length) { section.style.display = 'none'; return; }
+    section.style.display = '';
+    var byDate = {};
+    out.forEach(function (r) { (byDate[r.date] = byDate[r.date] || []).push(r); });
+    var dates = Object.keys(byDate).sort().reverse();
+    document.getElementById('checkedOutList').innerHTML = dates.map(function (d) {
+      return '<div class="day-group"><h3 class="day-heading">' + fmtDate(d) + '</h3>' +
+        chainHtml(byDate[d], { tracking: true, mailButton: true }) +
+        '</div>';
+    }).join('');
+  }
+
+  // Stage 3, the archive: prevents re-filing by staying visible regardless
+  // of cart/day-filter state — only trips actually confirmed mailed land
+  // here, not merely "claim started".
   function renderAlreadyFiled() {
-    var filed = allRows.filter(function (r) { return trackingFor(rowKey(r)).claimed; });
+    var filed = allRows.filter(function (r) { return trackingFor(rowKey(r)).mailed; });
     var section = document.getElementById('alreadyFiledSection');
     if (!filed.length) { section.style.display = 'none'; return; }
     section.style.display = '';
@@ -1016,7 +1073,7 @@
     }).join('');
   }
 
-  function renderAll() { renderChainDays(); renderMyClaims(); renderAlreadyFiled(); }
+  function renderAll() { renderChainDays(); renderMyClaims(); renderCheckedOut(); renderAlreadyFiled(); }
 
   document.addEventListener('change', function (e) {
     if (e.target.classList.contains('leg-check')) {
@@ -1029,11 +1086,12 @@
       var ck = e.target.dataset.key;
       saveTrackingRow(rowsByKey[ck], { claimed: e.target.checked });
       renderMyClaims();
-      renderAlreadyFiled();
-      // Checking this box can grow the leg's card (two new dropdowns) and
-      // reveal the "already filed" section above it, both of which push
-      // this exact row further down the page — without this, the box you
-      // just clicked visually "disappears" off-screen even though nothing
+      renderCheckedOut();
+      // Checking this box moves the leg between the cart and "checked out"
+      // sections (which can appear/disappear) and can grow the card with
+      // two new dropdowns — all of which push this exact row further down
+      // or off the page, with no auto-scroll to compensate. Without this,
+      // the box you just clicked visually "disappears" even though nothing
       // was removed. Keep the page anchored on what you just interacted with.
       keepInView('.claimed-check[data-key="' + ck + '"]');
       return;
@@ -1042,7 +1100,6 @@
       var sk = e.target.dataset.key, field = e.target.dataset.field, patch = {};
       patch[field] = e.target.value;
       saveTrackingRow(rowsByKey[sk], patch);
-      renderAlreadyFiled();
     }
   });
   // Plain 'input' (not 'change'/full re-render), debounced, so typing a
@@ -1060,11 +1117,34 @@
   });
 
   document.addEventListener('click', function (e) {
-    var btn = e.target.closest('.expand-toggle');
-    if (!btn) return;
-    var key = btn.dataset.key;
-    if (expandedLegs.has(key)) expandedLegs.delete(key); else expandedLegs.add(key);
-    renderAll();
+    var expandBtn = e.target.closest('.expand-toggle');
+    if (expandBtn) {
+      var ekey = expandBtn.dataset.key;
+      if (expandedLegs.has(ekey)) expandedLegs.delete(ekey); else expandedLegs.add(ekey);
+      renderAll();
+      return;
+    }
+    var mailBtn = e.target.closest('.mail-btn');
+    if (mailBtn) {
+      var mkey = mailBtn.dataset.key;
+      // A real, deliberate gate — this is the one action that moves a
+      // claim into the archive and stops it being editable, so it asks
+      // the literal question the user wanted asked before doing that.
+      if (!window.confirm('All forms printed and on the go?')) return;
+      saveTrackingRow(rowsByKey[mkey], { mailed: true });
+      renderCheckedOut();
+      renderAlreadyFiled();
+    }
+  });
+
+  document.getElementById('checkoutBtn').addEventListener('click', function () {
+    var cartKeys = allRows
+      .filter(function (r) { return selected[rowKey(r)] && !trackingFor(rowKey(r)).claimed; })
+      .map(rowKey);
+    cartKeys.forEach(function (key) { saveTrackingRow(rowsByKey[key], { claimed: true }); });
+    renderMyClaims();
+    renderCheckedOut();
+    keepInView('#checkedOutSection');
   });
 
   document.getElementById('selectSuggestedBtn').addEventListener('click', function () {
