@@ -263,8 +263,10 @@
 
   .chain-leg {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 8px;
+    row-gap: 4px;
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 3px;
@@ -277,6 +279,17 @@
   .leg-route { color: var(--ink); }
   .leg-time { color: var(--ink-dim); font-size: 11.5px; }
   .dest-arrow { color: var(--ink-faint); margin: 0 3px; }
+
+  .leg-amounts {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    font-size: 11px;
+    color: var(--ink-dim);
+    border-left: 1px solid var(--border);
+    padding-left: 8px;
+  }
+  .leg-amounts strong { color: var(--ink); font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
   .gap-warning {
     background: var(--red-dim);
@@ -423,6 +436,10 @@
     if (v === null || v === undefined) return '–';
     return v.toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + ' kr';
   }
+  function fmtKm(km) {
+    if (km === null || km === undefined) return '–';
+    return km.toFixed(1) + ' km';
+  }
   var WEEKDAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   function fmtDate(yyyymmdd) {
     if (!yyyymmdd) return '–';
@@ -486,12 +503,19 @@
     var tier = r.calc === 'cancelled'
       ? '<span class="chip canceled">Cancelled</span>'
       : '<span class="chip ' + tierClass(r) + '">' + r.deductionPct + '%' + (r.delayApprox ? ' approx.' : '') + '</span>';
+    var amounts = r.calc === 'eligible'
+      ? '<span class="leg-amounts">' +
+          '<span>Prisavdrag (voucher): <strong>' + fmtSek(r.deductionVoucher) + '</strong></span>' +
+          '<span>Bilresa: <strong>' + fmtSek(r.carCash) + '</strong> · ' + fmtKm(r.distanceKm) + '</span>' +
+        '</span>'
+      : '';
     return '<label class="chain-leg">' +
       '<input type="checkbox" class="leg-check" data-key="' + esc(key) + '"' + checked + '>' +
       '<span class="line-badge">' + esc(r.line) + '</span>' +
       '<span class="leg-route">' + esc(r.originName || '?') + '<span class="dest-arrow">→</span>' + esc(r.dest || '?') + '</span>' +
       '<span class="leg-time num">' + fmtTime(r.originTimeIso) + '–' + fmtTime(r.destTimeIso) + '</span>' +
       tier +
+      amounts +
       '</label>';
   }
 
