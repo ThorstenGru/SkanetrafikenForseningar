@@ -17,6 +17,14 @@ reimbursement), based on the rules in
 [docs/COMPENSATION_RULES.md](docs/COMPENSATION_RULES.md). Not a real claim
 tool — see the disclaimer on the page itself.
 
+**Reasonable claim chains:** https://thorstengru.github.io/SkanetrafikenForseningar/claims.html
+— checks whether a set of claims could plausibly be one real rider's day:
+groups eligible trips per day into chains where one trip's destination is
+the next trip's origin (same place, in order), and flags any gap between
+chains with the question an investigator would ask ("how did you get from
+X to Y?"). Illustrative and network-wide like the other pages, not
+personalized — you still pick which trips were actually yours.
+
 ## Documentation
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — the pipeline in detail, design decisions and why.
@@ -94,6 +102,7 @@ individual delay) lives in a separate, non-public Postgres database.
 | `src/housekeeping.py` | Deletes data older than 45 days. Runs automatically daily. |
 | `src/build_dashboard.py` | Builds the standalone HTML dashboard. Runs automatically on every scan. |
 | `src/build_compensation.py` | Builds the compensation-estimate page (`compensation.html`). Runs automatically on every scan. |
+| `src/build_claims.py` | Builds the reasonable-claim-chains page (`claims.html`). Runs automatically on every scan. |
 | `src/static_index.py` | Can be run standalone to force a static-index refresh. |
 | `src/backfill_koda.py` | One-off backfill of past days from Trafiklab's KoDa historical archive. Manually triggered (`backfill.yml`), see [docs/RUNBOOK.md](docs/RUNBOOK.md#backfill-historical-data-koda). |
 

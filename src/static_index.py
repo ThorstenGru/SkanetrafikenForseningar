@@ -138,7 +138,9 @@ def rebuild_index():
         stops = {}
         with open(os.path.join(config.RAW_STATIC_CACHE_DIR, "stops.txt"), "r", encoding="utf-8-sig", newline="") as f:
             for row in csv.DictReader(f):
-                stops[row["stop_id"]] = row.get("stop_name", "")
+                lat = float(row["stop_lat"]) if row.get("stop_lat") not in (None, "") else None
+                lon = float(row["stop_lon"]) if row.get("stop_lon") not in (None, "") else None
+                stops[row["stop_id"]] = (row.get("stop_name", ""), lat, lon)
 
         first_stop, last_stop, distance_km = _scan_stop_times(config.RAW_STATIC_CACHE_DIR)
 
@@ -149,7 +151,7 @@ def rebuild_index():
         conn = sqlite3.connect(config.STATIC_INDEX_PATH)
         conn.execute("CREATE TABLE meta (built_at REAL)")
         conn.execute("CREATE TABLE routes (route_id TEXT PRIMARY KEY, short_name TEXT, long_name TEXT, route_type INTEGER)")
-        conn.execute("CREATE TABLE stops (stop_id TEXT PRIMARY KEY, stop_name TEXT)")
+        conn.execute("CREATE TABLE stops (stop_id TEXT PRIMARY KEY, stop_name TEXT, stop_lat REAL, stop_lon REAL)")
         conn.execute(
             "CREATE TABLE trip_meta ("
             "trip_id TEXT PRIMARY KEY, route_id TEXT, direction_id INTEGER, service_id TEXT, "
@@ -167,7 +169,7 @@ def rebuild_index():
         conn.execute("CREATE INDEX idx_calendar_dates_svc ON calendar_dates (service_id, date)")
 
         conn.executemany("INSERT INTO routes VALUES (?, ?, ?, ?)", [(k, v[0], v[1], v[2]) for k, v in routes.items()])
-        conn.executemany("INSERT INTO stops VALUES (?, ?)", list(stops.items()))
+        conn.executemany("INSERT INTO stops VALUES (?, ?, ?, ?)", [(k, v[0], v[1], v[2]) for k, v in stops.items()])
 
         with open(trips_path, "r", encoding="utf-8-sig", newline="") as f:
             trip_rows = []
@@ -186,7 +188,7 @@ def rebuild_index():
                     row.get("samtrafiken_internal_trip_number", ""),
                     origin_stop_id,
                     dest_stop_id,
-                    stops.get(dest_stop_id, "") if dest_stop_id else "",
+                    stops.get(dest_stop_id, ("", None, None))[0] if dest_stop_id else "",
                     dest_seq,
                     distance_km.get(trip_id),
                     0 if (is_ferry or is_cross_border) else 1,

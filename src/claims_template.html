@@ -1,0 +1,642 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skånetrafiken – Reasonable Claim Chains</title>
+<style>
+  :root {
+    --bg: #dfe6ec;
+    --panel: #ffffff;
+    --panel-alt: #eef3f7;
+    --border: #c7d1da;
+    --ink: #263241;
+    --ink-dim: #5c6b7a;
+    --ink-faint: #94a3b3;
+    --amber: #c2660f;
+    --amber-bright: #e8872f;
+    --red: #d1453a;
+    --red-dim: #fdecea;
+    --green: #1f9d55;
+    --green-dim: #e6f7ec;
+    --display: "Bahnschrift SemiCondensed", "Bahnschrift", "Arial Narrow", "Segoe UI Semibold", sans-serif;
+    --body: "Segoe UI", system-ui, -apple-system, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--body);
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection { background: var(--amber); color: #1a1000; }
+  a { color: var(--amber); }
+
+  .wrap {
+    max-width: 1360px;
+    margin: 0 auto;
+    padding: 28px 24px 80px;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+
+  header.top {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 20px;
+  }
+
+  .pagenav {
+    display: flex;
+    gap: 14px;
+    font-family: var(--display);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .pagenav a { color: var(--ink-dim); text-decoration: none; padding-bottom: 3px; border-bottom: 2px solid transparent; }
+  .pagenav a:hover { color: var(--amber); }
+  .pagenav a.current { color: var(--amber-bright); border-bottom-color: var(--amber); }
+
+  .eyebrow {
+    font-family: var(--display);
+    font-size: 12.5px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--amber);
+    font-weight: 600;
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(28px, 4vw, 40px);
+    letter-spacing: 0.01em;
+    margin: 2px 0 4px;
+    color: #182430;
+    text-wrap: balance;
+  }
+
+  .meta-line {
+    color: var(--ink-dim);
+    font-size: 13.5px;
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .disclaimer {
+    background: var(--red-dim);
+    border: 1px solid #f3c9c2;
+    border-radius: 3px;
+    padding: 14px 18px;
+    font-size: 13px;
+    color: #7a3229;
+    line-height: 1.6;
+  }
+  .disclaimer strong { color: #b23a2e; }
+  .disclaimer a { color: #a83828; }
+
+  .info-box {
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 14px 18px;
+    font-size: 13px;
+    color: var(--ink);
+    line-height: 1.6;
+  }
+  .info-box strong { color: #182430; }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .stat {
+    background: var(--panel);
+    padding: 18px 18px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+  .stat .label {
+    font-family: var(--display);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+    font-weight: 600;
+  }
+  .stat .value {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 28px;
+    font-weight: 600;
+    color: var(--amber-bright);
+    letter-spacing: -0.01em;
+  }
+  .stat .sub { font-size: 12px; color: var(--ink-faint); font-family: var(--mono); }
+  .stat.crit .value { color: var(--red); }
+  .stat.ok .value { color: var(--green); }
+
+  section { display: flex; flex-direction: column; gap: 12px; }
+
+  .section-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  h2 {
+    font-family: var(--display);
+    font-size: 13px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink);
+    font-weight: 700;
+    margin: 0;
+  }
+
+  .hint { font-size: 12.5px; color: var(--ink-faint); }
+
+  .rules-panel {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+    font-size: 13px;
+  }
+  .rules-panel .cell { background: var(--panel); padding: 12px 16px; }
+  .rules-panel dt {
+    font-family: var(--display);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 4px;
+  }
+  .rules-panel dd { margin: 0; font-family: var(--mono); color: var(--ink); font-variant-numeric: tabular-nums; }
+
+  .line-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 30px;
+    padding: 2px 7px;
+    border-radius: 3px;
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    font-family: var(--mono);
+    font-weight: 600;
+    font-size: 12.5px;
+    color: #182430;
+  }
+
+  .chip {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-family: var(--display);
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+  }
+  .chip.tier50 { background: rgba(232, 135, 47, 0.15); color: var(--amber-bright); }
+  .chip.tier75 { background: rgba(209, 69, 58, 0.15); color: #b8471f; }
+  .chip.tier100 { background: var(--red-dim); color: #b23a2e; }
+  .chip.canceled { background: var(--red-dim); color: #b23a2e; }
+  .chip.ok { background: var(--green-dim); color: var(--green); }
+
+  .day-group {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .day-heading {
+    font-family: var(--display);
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    font-weight: 700;
+    color: #182430;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .chain-card {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 8px 10px;
+  }
+  .chain-arrow { color: var(--ink-faint); font-size: 16px; }
+
+  .chain-leg {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 6px 10px;
+    cursor: pointer;
+    font-size: 12.5px;
+  }
+  .chain-leg:hover { border-color: var(--amber); }
+  .chain-leg input[type="checkbox"] { accent-color: var(--amber); cursor: pointer; }
+  .leg-route { color: var(--ink); }
+  .leg-time { color: var(--ink-dim); font-size: 11.5px; }
+  .dest-arrow { color: var(--ink-faint); margin: 0 3px; }
+
+  .gap-warning {
+    background: var(--red-dim);
+    border: 1px solid #f3c9c2;
+    color: #7a3229;
+    border-radius: 3px;
+    padding: 8px 12px;
+    font-size: 12.5px;
+    line-height: 1.5;
+  }
+  .gap-warning strong { color: #b23a2e; }
+
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .controls label {
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-faint);
+    font-family: var(--display);
+    margin-right: 4px;
+  }
+  button.link-btn {
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    color: var(--ink);
+    font-family: var(--display);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 7px 14px;
+    border-radius: 3px;
+    cursor: pointer;
+  }
+  button.link-btn:hover { border-color: var(--amber); color: var(--amber); }
+
+  footer {
+    color: var(--ink-faint);
+    font-size: 12px;
+    border-top: 1px solid var(--border);
+    padding-top: 16px;
+    line-height: 1.7;
+  }
+
+  :focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+
+  @media (max-width: 900px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <nav class="pagenav">
+      <a href="index.html">Delay history</a>
+      <a href="compensation.html">Compensation estimate</a>
+      <a href="claims.html" class="current">Reasonable claim chains</a>
+    </nav>
+    <div class="eyebrow">Skånetrafiken · Sommarbiljetten scope</div>
+    <h1>Is this a travelable set of claims?</h1>
+    <div class="meta-line" id="metaLine">loading…</div>
+  </header>
+
+  <div class="disclaimer">
+    <strong>Illustrative only, not an application.</strong> This page builds on the same
+    network-wide delay data as
+    <a href="compensation.html">compensation.html</a> — it doesn't know which trips were
+    actually yours. Its only job is to check <em>internal consistency</em>: if you tick a
+    set of claims, do they form one continuous, physically possible day of travel? A real
+    claim is for a journey you actually made — Skånetrafiken investigates every
+    application individually and can require further proof for unusual or frequent claims
+    (see docs/COMPENSATION_RULES.md §7).
+  </div>
+
+  <section>
+    <div class="section-head">
+      <h2>Where the Sommarbiljett is valid — the base for any claim here</h2>
+      <span class="hint">docs/COMPENSATION_RULES.md §8</span>
+    </div>
+    <dl class="rules-panel">
+      <div class="cell"><dt>Area</dt><dd>All of Skåne — every Skånetrafiken service (bus, train, tram)</dd></div>
+      <div class="cell"><dt>Validity</dt><dd>15 June – 15 August, 24/7</dd></div>
+      <div class="cell"><dt>Not covered</dt><dd>Öresund bridge / any Denmark-bound stop, the Ven ferry</dd></div>
+      <div class="cell"><dt>Riders per ticket</dt><dd>Up to 3, at most 1 aged 20+</dd></div>
+      <div class="cell"><dt>"Same place" for chaining</dt><dd id="radiusCell">…</dd></div>
+    </dl>
+  </section>
+
+  <section class="stats" id="statStrip"></section>
+
+  <section>
+    <div class="section-head">
+      <h2>Suggested reasonable chains</h2>
+      <span class="hint">Network-wide, illustrative — grouped by day into the longest sequences where one trip's destination is the next trip's origin. Tick the legs that were actually yours.</span>
+    </div>
+    <div class="controls">
+      <button class="link-btn" id="selectSuggestedBtn">Reset to suggested selection</button>
+      <button class="link-btn" id="clearBtn">Clear all</button>
+    </div>
+    <div id="chainDays"></div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Your claim list</h2>
+      <span class="hint">Recomputed live from the checkboxes above — this is what an investigator would actually see</span>
+    </div>
+    <div class="stats" id="myClaimsStats"></div>
+    <div id="myClaimsDays"></div>
+  </section>
+
+  <footer>
+    Sources: <a href="https://www.skanetrafiken.se/sommarbiljetten" target="_blank" rel="noopener">Sommarbiljetten</a>,
+    <a href="https://github.com/ThorstenGru/SkanetrafikenForseningar/blob/master/docs/COMPENSATION_RULES.md" target="_blank" rel="noopener">docs/COMPENSATION_RULES.md</a>
+    (retrieved 2026-07-05). Connections are place + time only (straight-line distance between
+    stops, no routing API) — a match means the two stops are close enough to plausibly be the
+    same interchange point, not that a specific connecting service was verified. A trip only
+    "confirms" its destination when it actually reached its own final stop (status Delayed);
+    partially cancelled trips and trips whose final stop was never captured in the feed can
+    start a chain but can't be relied on to extend one, since where the rider actually ended
+    up isn't known.
+  </footer>
+</div>
+
+<script type="application/json" id="raw-data">__DATA_JSON__</script>
+<script>
+(function () {
+  var payload = JSON.parse(document.getElementById('raw-data').textContent);
+  var allRows = payload.rows;
+  var C = payload.constants;
+  var CONNECT_RADIUS_M = C.connectRadiusM;
+
+  function esc(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+    });
+  }
+  function fmtSek(v) {
+    if (v === null || v === undefined) return '–';
+    return v.toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + ' kr';
+  }
+  var WEEKDAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  function fmtDate(yyyymmdd) {
+    if (!yyyymmdd) return '–';
+    return yyyymmdd.slice(0, 4) + '-' + yyyymmdd.slice(4, 6) + '-' + yyyymmdd.slice(6, 8);
+  }
+  function fmtTime(iso) {
+    if (!iso) return '?';
+    return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Stockholm' });
+  }
+  function tierClass(r) {
+    if (r.calc === 'cancelled') return 'canceled';
+    if (r.deductionPct >= 100) return 'tier100';
+    if (r.deductionPct >= 75) return 'tier75';
+    return 'tier50';
+  }
+  function rowKey(r) { return r.trip + '|' + r.date; }
+
+  function haversineMeters(lat1, lon1, lat2, lon2) {
+    if (lat1 == null || lon1 == null || lat2 == null || lon2 == null) return null;
+    var R = 6371000, toRad = function (d) { return d * Math.PI / 180; };
+    var dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+    var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  // Does trip `a` (already in a chain) connect into trip `b` (candidate next leg)?
+  function connects(a, b) {
+    if (!a.destConfirmed) return false;
+    var dist = haversineMeters(a.destLat, a.destLon, b.originLat, b.originLon);
+    if (dist === null || dist > CONNECT_RADIUS_M) return false;
+    if (a.destTimeIso && b.originTimeIso && b.originTimeIso < a.destTimeIso) return false;
+    return true;
+  }
+
+  function sortByStart(rows) {
+    return rows.slice().sort(function (a, b) {
+      var at = a.originTimeIso || a.destTimeIso || '';
+      var bt = b.originTimeIso || b.destTimeIso || '';
+      return at < bt ? -1 : at > bt ? 1 : 0;
+    });
+  }
+
+  // Greedy left-to-right grouping: illustrative, not a globally-optimal
+  // matching — good enough to demonstrate which combinations are plausible.
+  function buildChains(rows) {
+    var chains = [];
+    sortByStart(rows).forEach(function (r) {
+      for (var i = 0; i < chains.length; i++) {
+        var tail = chains[i][chains[i].length - 1];
+        if (connects(tail, r)) { chains[i].push(r); return; }
+      }
+      chains.push([r]);
+    });
+    return chains;
+  }
+
+  function legHtml(r) {
+    var key = rowKey(r);
+    var checked = selected[key] ? ' checked' : '';
+    var tier = r.calc === 'cancelled'
+      ? '<span class="chip canceled">Cancelled</span>'
+      : '<span class="chip ' + tierClass(r) + '">' + r.deductionPct + '%' + (r.delayApprox ? ' approx.' : '') + '</span>';
+    return '<label class="chain-leg">' +
+      '<input type="checkbox" class="leg-check" data-key="' + esc(key) + '"' + checked + '>' +
+      '<span class="line-badge">' + esc(r.line) + '</span>' +
+      '<span class="leg-route">' + esc(r.originName || '?') + '<span class="dest-arrow">→</span>' + esc(r.dest || '?') + '</span>' +
+      '<span class="leg-time num">' + fmtTime(r.originTimeIso) + '–' + fmtTime(r.destTimeIso) + '</span>' +
+      tier +
+      '</label>';
+  }
+
+  function chainHtml(chain) {
+    return '<div class="chain-card">' + chain.map(legHtml).join('<span class="chain-arrow">›</span>') + '</div>';
+  }
+
+  function gapHtml(prevLast, nextFirst) {
+    var fromConfirmed = prevLast.destConfirmed;
+    var fromPlace = fromConfirmed ? prevLast.dest : (prevLast.originName || '?') + ' (trip to ' + (prevLast.dest || '?') + ' didn’t confirm arrival)';
+    var fromTime = fromConfirmed ? prevLast.destTimeIso : prevLast.originTimeIso;
+    return '<div class="gap-warning">⚠ Unexplained gap — how did you get from <strong>' +
+      esc(fromPlace) + '</strong> (' + fmtTime(fromTime) + ') to <strong>' +
+      esc(nextFirst.originName || '?') + '</strong> (' + fmtTime(nextFirst.originTimeIso) + ')?</div>';
+  }
+
+  var eligible = allRows.filter(function (r) { return r.calc === 'eligible'; });
+  var cancelled = allRows.filter(function (r) { return r.calc === 'cancelled'; });
+
+  document.getElementById('metaLine').textContent =
+    'Window ' + fmtDate(payload.windowStart) + ' .. ' + fmtDate(payload.windowEnd) + ' (full retention) · ' +
+    eligible.length.toLocaleString('en-GB') + ' eligible trip(s) considered network-wide · all times Sweden local time (Europe/Stockholm)';
+  document.getElementById('radiusCell').textContent = 'Stops within ' + CONNECT_RADIUS_M + ' m of each other';
+
+  // ---- Network-wide suggested chains (by day, over ALL eligible+cancelled trips) ----
+  var byDate = {};
+  allRows.forEach(function (r) { (byDate[r.date] = byDate[r.date] || []).push(r); });
+
+  var dayChains = {};
+  Object.keys(byDate).forEach(function (d) { dayChains[d] = buildChains(byDate[d]); });
+
+  var suggested = {};
+  Object.keys(dayChains).forEach(function (d) {
+    var best = dayChains[d].reduce(function (best, c) {
+      if (!best) return c;
+      if (c.length !== best.length) return c.length > best.length ? c : best;
+      var sum = function (x) { return x.reduce(function (a, r) { return a + (r.deductionCash || 0); }, 0); };
+      return sum(c) > sum(best) ? c : best;
+    }, null);
+    if (best) best.forEach(function (r) { suggested[rowKey(r)] = true; });
+  });
+
+  var selected = {};
+  Object.keys(suggested).forEach(function (k) { selected[k] = true; });
+
+  var daysWithGaps = Object.keys(dayChains).filter(function (d) { return dayChains[d].length > 1; }).length;
+
+  document.getElementById('statStrip').innerHTML = [
+    { label: 'Eligible trips (network-wide)', value: eligible.length, sub: 'illustrative, not personal' },
+    { label: 'Cancelled trips', value: cancelled.length, sub: 'break any chain through them' },
+    { label: 'Days with multiple chains', value: daysWithGaps, sub: 'need a gap explained if combined', crit: daysWithGaps > 0 },
+    { label: 'Suggested chain legs', value: Object.keys(suggested).length, sub: 'longest chain per day, pre-checked below' },
+  ].map(function (s) {
+    return '<div class="stat' + (s.crit ? ' crit' : '') + '"><div class="label">' + esc(s.label) + '</div>' +
+      '<div class="value">' + s.value + '</div><div class="sub">' + esc(s.sub) + '</div></div>';
+  }).join('');
+
+  function renderChainDays() {
+    var dates = Object.keys(dayChains).sort().reverse();
+    document.getElementById('chainDays').innerHTML = dates.map(function (d) {
+      var chains = dayChains[d].slice().sort(function (a, b) {
+        var at = a[0].originTimeIso || a[0].destTimeIso || '';
+        var bt = b[0].originTimeIso || b[0].destTimeIso || '';
+        return at < bt ? -1 : at > bt ? 1 : 0;
+      });
+      var parts = ['<div class="day-group"><h3 class="day-heading">' + fmtDate(d) +
+        (chains.length > 1
+          ? ' <span class="chip canceled">' + (chains.length - 1) + ' gap(s) network-wide</span>'
+          : ' <span class="chip ok">one continuous chain</span>') +
+        '</h3>'];
+      chains.forEach(function (chain, i) {
+        if (i > 0) parts.push(gapHtml(chains[i - 1][chains[i - 1].length - 1], chain[0]));
+        parts.push(chainHtml(chain));
+      });
+      parts.push('</div>');
+      return parts.join('');
+    }).join('') || '<p class="hint">No eligible trips in this window.</p>';
+  }
+
+  function renderMyClaims() {
+    var chosen = allRows.filter(function (r) { return selected[rowKey(r)]; });
+    var byDate2 = {};
+    chosen.forEach(function (r) { (byDate2[r.date] = byDate2[r.date] || []).push(r); });
+
+    var totalCash = 0, totalVoucher = 0, gapCount = 0;
+    var dates = Object.keys(byDate2).sort().reverse();
+    var html = dates.map(function (d) {
+      var segs = buildChains(byDate2[d]);
+      segs = segs.slice().sort(function (a, b) {
+        var at = a[0].originTimeIso || a[0].destTimeIso || '';
+        var bt = b[0].originTimeIso || b[0].destTimeIso || '';
+        return at < bt ? -1 : at > bt ? 1 : 0;
+      });
+      var parts = ['<div class="day-group"><h3 class="day-heading">' + fmtDate(d) +
+        (segs.length > 1
+          ? ' <span class="chip canceled">' + (segs.length - 1) + ' unexplained gap(s)</span>'
+          : ' <span class="chip ok">consistent day</span>') +
+        '</h3>'];
+      segs.forEach(function (seg, i) {
+        if (i > 0) { gapCount++; parts.push(gapHtml(segs[i - 1][segs[i - 1].length - 1], seg[0])); }
+        parts.push(chainHtml(seg));
+      });
+      parts.push('</div>');
+      return parts.join('');
+    }).join('');
+
+    chosen.forEach(function (r) {
+      if (r.calc === 'eligible') { totalCash += r.deductionCash; totalVoucher += r.deductionVoucher; }
+    });
+
+    document.getElementById('myClaimsStats').innerHTML = [
+      { label: 'Selected claims', value: chosen.length, sub: dates.length + ' day(s)' },
+      { label: 'Price deduction, cash', value: fmtSek(totalCash), sub: 'if all claimed as cash' },
+      { label: 'Price deduction, voucher', value: fmtSek(totalVoucher), sub: '+50% bonus (värdekod)' },
+      { label: 'Unexplained gaps', value: gapCount, sub: gapCount ? 'be ready to explain these' : 'fully consistent', crit: gapCount > 0 },
+    ].map(function (s) {
+      return '<div class="stat' + (s.crit ? ' crit' : '') + '"><div class="label">' + esc(s.label) + '</div>' +
+        '<div class="value">' + s.value + '</div><div class="sub">' + esc(s.sub) + '</div></div>';
+    }).join('');
+
+    document.getElementById('myClaimsDays').innerHTML = html ||
+      '<p class="hint">No claims selected yet — tick the legs that were actually yours in the section above.</p>';
+  }
+
+  function renderAll() { renderChainDays(); renderMyClaims(); }
+
+  document.addEventListener('change', function (e) {
+    if (!e.target.classList.contains('leg-check')) return;
+    var key = e.target.dataset.key;
+    if (e.target.checked) selected[key] = true; else delete selected[key];
+    renderAll();
+  });
+
+  document.getElementById('selectSuggestedBtn').addEventListener('click', function () {
+    selected = {};
+    Object.keys(suggested).forEach(function (k) { selected[k] = true; });
+    renderAll();
+  });
+  document.getElementById('clearBtn').addEventListener('click', function () {
+    selected = {};
+    renderAll();
+  });
+
+  renderAll();
+})();
+</script>
+</body>
+</html>

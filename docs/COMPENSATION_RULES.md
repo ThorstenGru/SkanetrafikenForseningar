@@ -217,3 +217,51 @@ full 45-day retention window. Known simplifications, by design:
   calculation — the rules don't specify a clear formula for a trip that
   never ran, so estimating one would be inventing a number, not measuring
   one.
+
+## 10. Reasonable claim chains (`claims.html`, added 2026-07-06)
+
+Directly follows from item 1 above ("network-wide, illustrative... not an
+exact representation of a real rider's claim"): `compensation.html` lists
+every eligible trip on the network as if it were claimed, which is not what
+a real claim looks like. A real claim is for a journey the rider actually
+made, and a *set* of claims for the same day has to be internally
+consistent — if you claim a trip ending in Ystad and separately a trip
+starting in Simrishamn the same day, the obvious question is "how did you
+get from Ystad to Simrishamn?"
+
+**Decisions made with the user (2026-07-06):**
+1. **Interaction model — both auto-suggested and manually adjustable.** The
+   page auto-groups all eligible network trips per day into the longest
+   connected chains and pre-checks the best one as a starting suggestion;
+   the user then ticks/unticks individual legs, with the chain-and-gap
+   check re-run live against exactly what's currently checked.
+2. **Continuity scope — per calendar day.** A chain only has to be
+   internally consistent within one day; each day resets (the rider is
+   presumably home overnight).
+3. **"Connects" — fuzzy geographic match, not exact stop_name.** Two stops
+   count as the same place if they're within `CLAIM_CHAIN_CONNECT_RADIUS_M`
+   (600 m straight-line, see `config.py`) of each other. This required
+   adding `stop_lat`/`stop_lon` to `static_index.py`'s `stops` table (not
+   previously stored) and forcing a one-off static-index rebuild
+   (`FORCE_STATIC_REFRESH=true` env var on `scan.py`, wired to a
+   `workflow_dispatch` input on `scan.yml`) to backfill coordinates for the
+   already-committed index.
+4. **No fixed home anchor.** Only consecutive legs are checked against each
+   other; the first leg of a day's chain can start anywhere.
+
+**Known simplifications:**
+- A trip only "confirms" its destination (`destConfirmed`) when it actually
+  reached its own final stop (status `DELAYED`). Partially cancelled trips
+  (skipped their final stop) and trips whose final stop was never captured
+  in the feed can start a chain but can never be relied on to extend one —
+  where the rider actually ended up in those cases isn't known.
+- Trip endpoints (origin/destination stop identity) come from
+  `static_index.py`'s `trip_meta` table (derived from the GTFS static
+  schedule), not from which stops happened to be polled in the realtime
+  feed — more reliable, but tied to whichever schedule was current when the
+  static index was last built (see item 4 in section 9 above for the same
+  caveat on `destination_stop_name`).
+- The chain-building algorithm is a simple greedy left-to-right grouping by
+  time, not a globally optimal matching — good enough to illustrate which
+  combinations are plausible, not guaranteed to find every possible
+  grouping in unusual interleavings.

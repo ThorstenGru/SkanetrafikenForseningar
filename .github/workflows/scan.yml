@@ -3,7 +3,11 @@ name: Scan Skånetrafiken delays
 on:
   schedule:
     - cron: "0 */2 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      force_static_refresh:
+        description: "Force-rebuild the static index (routes/stops/lat-lon cache) even if not stale yet"
+        default: "false"
 
 permissions:
   contents: write
@@ -32,6 +36,7 @@ jobs:
           TRAFIKLAB_STATIC_KEY: ${{ secrets.TRAFIKLAB_STATIC_KEY }}
           TRAFIKLAB_REALTIME_KEY: ${{ secrets.TRAFIKLAB_REALTIME_KEY }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FORCE_STATIC_REFRESH: ${{ github.event.inputs.force_static_refresh }}
         run: python src/scan.py
 
       - name: Commit static index (routes/stops cache, changes ~weekly)
@@ -51,6 +56,11 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python src/build_compensation.py --out pages_site/compensation.html
+
+      - name: Build reasonable claim chains page
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python src/build_claims.py --out pages_site/claims.html
 
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -147,6 +147,15 @@ CAR_RATE_SEK_PER_KM = 2.5  # Swedish Tax Agency's tax-free mileage rate, 25 kr/m
 ALT_TRANSPORT_CAP_SEK = 2960  # max per journey for car/taxi/other-operator reimbursement, effective 2026-01-01
 
 
+# "Reasonable claim chain" page (build_claims.py): two trips are treated as
+# happening at the same physical place — close enough that one could
+# realistically have walked from one stop to the other — if their stops are
+# within this radius. Covers cases like a bus stop and a train station in
+# the same small town having different stop_ids. Not a routing distance,
+# just straight-line (haversine).
+CLAIM_CHAIN_CONNECT_RADIUS_M = 600
+
+
 def price_deduction_pct(delay_min):
     """Price-deduction tier for a given final-destination delay, in minutes."""
     if delay_min >= 60:

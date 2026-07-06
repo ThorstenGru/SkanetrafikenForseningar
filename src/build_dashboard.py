@@ -184,10 +184,14 @@ def fetch_detail_rows(cur, start_date, end_date, single_date):
             trips[key] = t
         t["stop_ids"].append(stop_id)
         stop_delay_sec = dep_delay if dep_delay not in (None, 0) else arr_delay
+        sched_dt = sched_dep or sched_arr
+        act_dt = dep_time or arr_time
         t["stops"].append({
-            "seq": seq, "name": stop_name, "final": bool(is_final), "relationship": stop_rel,
+            "seq": seq, "stopId": stop_id, "name": stop_name, "final": bool(is_final), "relationship": stop_rel,
             "delayMin": round(stop_delay_sec / 60, 1) if stop_delay_sec is not None else None,
-            "schedTime": fmt_time(sched_dep or sched_arr), "actTime": fmt_time(dep_time or arr_time),
+            "schedTime": fmt_time(sched_dt), "actTime": fmt_time(act_dt),
+            "schedTimeIso": sched_dt.isoformat() if sched_dt else None,
+            "actTimeIso": act_dt.isoformat() if act_dt else None,
         })
         t["polls"] += polls
         t["firstSeen"] = min(t["firstSeen"], first_seen)

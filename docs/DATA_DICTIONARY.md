@@ -142,8 +142,8 @@ Rebuilt by `src/static_index.py`, at most once a week.
 |---|---|
 | `meta` | One row: `built_at` (unix epoch of the last rebuild). |
 | `routes` | `route_id` → `short_name`, `long_name`, `route_type` (raw GTFS code — see `config.ROUTE_TYPE_LABELS` for the bus/rail/tram/ferry mapping). |
-| `stops` | `stop_id` → `stop_name`. |
-| `trip_meta` | `trip_id` → `route_id`, `direction_id`, `service_id`, `destination_stop_id`, `destination_stop_name`, `final_stop_sequence`. |
+| `stops` | `stop_id` → `stop_name`, `stop_lat`, `stop_lon` (lat/lon added 2026-07-06 for `claims.html`'s "same place" check — see `COMPENSATION_RULES.md` §10). |
+| `trip_meta` | `trip_id` → `route_id`, `direction_id`, `service_id`, `trip_number`, `origin_stop_id`, `destination_stop_id`, `destination_stop_name`, `final_stop_sequence`, `distance_km`, `sommarticket_valid`. |
 | `calendar` | `service_id` → weekday flags (`monday`..`sunday`), `start_date`, `end_date`. |
 | `calendar_dates` | `service_id`, `date`, `exception_type` (1=added, 2=removed) — exceptions to the base calendar. |
 

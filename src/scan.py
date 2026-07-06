@@ -5,6 +5,7 @@ Usage:
     python src/scan.py
 """
 
+import os
 import sqlite3
 import sys
 from datetime import date, datetime, timezone
@@ -195,7 +196,10 @@ def process_alerts(feed, cur, now):
 
 def main():
     now = datetime.now(timezone.utc)
-    static_refreshed = static_index.ensure_index()
+    if os.environ.get("FORCE_STATIC_REFRESH") == "true":
+        static_refreshed = static_index.rebuild_index()
+    else:
+        static_refreshed = static_index.ensure_index()
 
     static_conn = sqlite3.connect(config.STATIC_INDEX_PATH)
     trip_meta, stops = load_trip_meta(static_conn)

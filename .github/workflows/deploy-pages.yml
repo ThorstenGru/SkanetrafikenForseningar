@@ -1,4 +1,4 @@
-name: Deploy pages (dashboard + compensation only)
+name: Deploy pages (dashboard + compensation + claims)
 
 on:
   workflow_dispatch: {}
@@ -34,6 +34,11 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python src/build_compensation.py --out pages_site/compensation.html
+
+      - name: Build reasonable claim chains page
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python src/build_claims.py --out pages_site/claims.html
 
       - uses: actions/upload-pages-artifact@v3
         with:

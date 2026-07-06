@@ -58,6 +58,11 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python src/build_compensation.py --out pages_site/compensation.html
 
+      - name: Build reasonable claim chains page
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python src/build_claims.py --out pages_site/claims.html
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: pages_site
