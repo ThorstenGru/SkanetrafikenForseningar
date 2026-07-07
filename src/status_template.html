@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skånetrafiken – System Status</title>
+<style>
+  :root {
+    --bg: #dfe6ec;
+    --panel: #ffffff;
+    --panel-alt: #eef3f7;
+    --border: #c7d1da;
+    --ink: #263241;
+    --ink-dim: #5c6b7a;
+    --ink-faint: #94a3b3;
+    --amber: #c2660f;
+    --amber-bright: #e8872f;
+    --red: #d1453a;
+    --red-dim: #fdecea;
+    --green: #1f9d55;
+    --green-dim: #e6f7ec;
+    --display: "Bahnschrift SemiCondensed", "Bahnschrift", "Arial Narrow", "Segoe UI Semibold", sans-serif;
+    --body: "Segoe UI", system-ui, -apple-system, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--ink); font-family: var(--body); line-height: 1.45; -webkit-font-smoothing: antialiased; }
+  a { color: var(--amber); }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 24px 80px; display: flex; flex-direction: column; gap: 24px; }
+  header.top { display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--border); padding-bottom: 20px; }
+  .pagenav { display: flex; gap: 14px; font-family: var(--display); font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 4px; }
+  .pagenav a { color: var(--ink-dim); text-decoration: none; padding-bottom: 3px; border-bottom: 2px solid transparent; }
+  .pagenav a.current { color: var(--amber-bright); border-bottom-color: var(--amber); }
+  .eyebrow { font-family: var(--display); font-size: 12.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--amber); font-weight: 600; }
+  h1 { font-family: var(--display); font-weight: 700; font-size: clamp(26px, 4vw, 36px); margin: 2px 0 4px; color: #182430; }
+  .meta-line { color: var(--ink-dim); font-size: 13px; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  section { display: flex; flex-direction: column; gap: 12px; }
+  h2 { font-family: var(--display); font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink); font-weight: 700; margin: 0; }
+  .hint { font-size: 12.5px; color: var(--ink-faint); }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 3px; padding: 16px 18px; }
+  .status-banner { border-radius: 3px; padding: 16px 18px; font-family: var(--display); font-size: 15px; font-weight: 700; letter-spacing: 0.01em; display: flex; align-items: center; gap: 10px; }
+  .status-banner.ok { background: var(--green-dim); color: #146c3a; border: 1px solid #b7e3c6; }
+  .status-banner.bad { background: var(--red-dim); color: #a83828; border: 1px solid #f3c9c2; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
+  .dot.ok { background: var(--green); }
+  .dot.bad { background: var(--red); }
+  .dot.unknown { background: var(--ink-faint); }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th { text-align: left; font-family: var(--display); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+  td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  td.num, th.num { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
+  tr:last-child td { border-bottom: none; }
+  .row-label { display: flex; align-items: center; gap: 8px; }
+  .err-text { color: var(--red); font-family: var(--mono); font-size: 12px; }
+  footer { color: var(--ink-faint); font-size: 12px; padding-top: 8px; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <nav class="pagenav">
+      <a href="index.html">Delay history</a>
+      <a href="compensation.html">Compensation estimate</a>
+      <a href="claims.html">Reasonable claim chains</a>
+      <a href="status.html" class="current">System status</a>
+    </nav>
+    <div class="eyebrow">Skånetrafiken · Infrastructure</div>
+    <h1>System status</h1>
+    <div class="meta-line" id="metaLine">loading…</div>
+  </header>
+
+  <section>
+    <div id="dbBanner" class="status-banner ok">Loading…</div>
+  </section>
+
+  <section>
+    <div class="section-head"><h2>Supabase database</h2></div>
+    <div class="card" id="dbCard"></div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>GitHub Actions workflows</h2>
+      <span class="hint">Most recent run of each — this page never triggers or waits on any of them, it only reads their last known result.</span>
+    </div>
+    <div class="card"><table id="workflowsTable"></table></div>
+  </section>
+
+  <section>
+    <div class="section-head"><h2>GitHub Pages</h2></div>
+    <div class="card"><table id="pagesTable"></table></div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Static GTFS index</h2>
+      <span class="hint">Freshness only — reads the committed sqlite file directly, never re-calls Trafiklab's static API (60 req/30-day quota).</span>
+    </div>
+    <div class="card" id="staticCard"></div>
+  </section>
+
+  <footer>
+    Rebuilt every 15 minutes by <code>status.yml</code>, independently of the live scanner and any backfill — this page is designed to still say something useful when the database itself is unreachable. This browser tab also auto-reloads every 15 minutes.
+  </footer>
+</div>
+
+<script type="application/json" id="raw-data">__DATA_JSON__</script>
+<script>
+(function () {
+  var payload = JSON.parse(document.getElementById('raw-data').textContent);
+
+  function esc(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+    });
+  }
+  function fmtWhen(iso) {
+    if (!iso) return '–';
+    return new Date(iso).toLocaleString('sv-SE', { timeZone: 'Europe/Stockholm' });
+  }
+  function ago(iso) {
+    if (!iso) return '';
+    var ms = Date.now() - new Date(iso).getTime();
+    var min = Math.round(ms / 60000);
+    if (min < 1) return 'just now';
+    if (min < 60) return min + ' min ago';
+    var hr = Math.round(min / 60);
+    if (hr < 48) return hr + ' h ago';
+    return Math.round(hr / 24) + ' d ago';
+  }
+  function dot(ok) {
+    return '<span class="dot ' + (ok === true ? 'ok' : ok === false ? 'bad' : 'unknown') + '"></span>';
+  }
+
+  document.getElementById('metaLine').textContent = 'Generated ' + fmtWhen(payload.generatedAt) + ' (' + ago(payload.generatedAt) + ') · all times Europe/Stockholm';
+
+  var db = payload.database || {};
+  var banner = document.getElementById('dbBanner');
+  banner.className = 'status-banner ' + (db.ok ? 'ok' : 'bad');
+  banner.innerHTML = dot(db.ok) + (db.ok ? 'Database reachable (' + db.latencyMs + ' ms)' : 'Database unreachable');
+
+  var dbCardHtml = '<table>' +
+    '<tr><td>Reachable</td><td class="num">' + (db.ok ? 'yes' : 'no') + '</td></tr>' +
+    '<tr><td>Probe latency</td><td class="num">' + (db.latencyMs != null ? db.latencyMs + ' ms' : '–') + '</td></tr>';
+  if (db.error) dbCardHtml += '<tr><td>Error</td><td class="err-text">' + esc(db.error) + '</td></tr>';
+  dbCardHtml += '</table>';
+  if (payload.tableSizes) {
+    dbCardHtml += '<div class="hint" style="margin-top:12px;">Total size: <strong>' + esc(payload.tableSizes.total) + '</strong></div>';
+    dbCardHtml += '<table style="margin-top:8px;"><tr><th>Table</th><th class="num">Size</th><th class="num">Approx. rows</th></tr>' +
+      payload.tableSizes.tables.map(function (t) {
+        return '<tr><td>' + esc(t.name) + '</td><td class="num">' + esc(t.size) + '</td><td class="num">' + esc(t.rows) + '</td></tr>';
+      }).join('') + '</table>';
+  } else if (db.ok) {
+    dbCardHtml += '<div class="hint" style="margin-top:12px;">Table breakdown unavailable.</div>';
+  }
+  document.getElementById('dbCard').innerHTML = dbCardHtml;
+
+  document.getElementById('workflowsTable').innerHTML = '<tr><th>Workflow</th><th>Last run</th><th>When</th></tr>' +
+    (payload.workflows || []).map(function (w) {
+      var ok = w.conclusion === 'success' ? true : (w.conclusion ? false : null);
+      var label = w.status === 'in_progress' ? 'running…' : (w.conclusion || w.status || '–');
+      var linked = w.url ? '<a href="' + esc(w.url) + '" target="_blank" rel="noopener">' + esc(label) + '</a>' : esc(label);
+      return '<tr><td class="row-label">' + dot(ok) + esc(w.label) + '</td><td>' + linked + '</td><td>' + esc(fmtWhen(w.at)) + (w.at ? ' <span class="hint">(' + ago(w.at) + ')</span>' : '') + '</td></tr>';
+    }).join('');
+
+  document.getElementById('pagesTable').innerHTML = '<tr><th>Page</th><th class="num">HTTP</th></tr>' +
+    (payload.pages || []).map(function (p) {
+      return '<tr><td class="row-label">' + dot(p.ok) + '<a href="' + esc(p.path) + '">' + esc(p.label) + '</a></td><td class="num">' + esc(p.statusCode || 'no response') + '</td></tr>';
+    }).join('');
+
+  var si = payload.staticIndex;
+  document.getElementById('staticCard').innerHTML = si && si.builtAt
+    ? 'Built ' + esc(fmtWhen(si.builtAt)) + ' <span class="hint">(' + ago(si.builtAt) + ')</span>'
+    : '<span class="hint">Not available.</span>';
+
+  setTimeout(function () { location.reload(); }, 15 * 60 * 1000);
+})();
+</script>
+</body>
+</html>

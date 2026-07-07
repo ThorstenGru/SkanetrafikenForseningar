@@ -1,0 +1,57 @@
+name: Status dashboard
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: skanetrafiken-status
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Preserve the other pages (this workflow only rebuilds status.html)
+        run: |
+          mkdir -p pages_site
+          for f in index.html compensation.html claims.html claim_form_template.pdf; do
+            curl -sfL "https://thorstengru.github.io/SkanetrafikenForseningar/$f" -o "pages_site/$f" || echo "warning: could not fetch $f, leaving it out of this deploy"
+          done
+
+      - name: Build status dashboard
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python src/build_status.py --out pages_site/status.html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: pages_site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
