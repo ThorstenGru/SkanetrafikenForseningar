@@ -6,15 +6,25 @@ on:
 permissions:
   contents: read
 
+# Shares scan.yml's group deliberately: VACUUM FULL takes an ACCESS
+# EXCLUSIVE lock on delays, which would otherwise block (or be blocked by)
+# the live scanner's INSERTs for the run's whole duration. Serializing the
+# two at the GH Actions level avoids that lock contention entirely.
+concurrency:
+  group: skanetrafiken-scan
+  cancel-in-progress: false
+
 jobs:
   cleanup:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
 
       - name: Install dependencies
         run: pip install -r requirements.txt

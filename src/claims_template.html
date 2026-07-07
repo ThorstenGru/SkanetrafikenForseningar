@@ -831,7 +831,13 @@
         renderCheckedOut();
       });
     }).catch(function (err) {
+      // #trackingStatus (where setStatus writes) sits in "Your claim cart",
+      // well above the "Checked out" section this button actually lives
+      // in -- without an alert + scroll, a failure here looks like the
+      // click didn't register at all.
       setStatus('⚠ could not fill/print (' + err.message + ')', 'err');
+      window.alert('Could not fill/print the claim form: ' + err.message);
+      keepInView('#trackingStatus');
     });
   }
   function handleDownloadFilled(path) {

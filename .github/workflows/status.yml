@@ -1,8 +1,15 @@
 name: Status dashboard
 
 on:
+  # Offset 7 min from scan.yml's on-the-quarter-hour */15 -- this and
+  # scan.yml each curl-fetch the page(s) the other owns before deploying
+  # (see build-content-pages's own note), which is a TOCTOU race if both
+  # land in the same minute: whichever deploys second can publish a
+  # snapshot of the other's pages that's already stale. Not aligned to the
+  # same schedule makes that far less likely to actually happen, though it
+  # doesn't eliminate it outright (a delayed run can still collide).
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "7,22,37,52 * * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -18,12 +25,14 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
 
       - name: Install dependencies
         run: pip install -r requirements.txt

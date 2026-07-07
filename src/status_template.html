@@ -31,11 +31,13 @@
   header.top { display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--border); padding-bottom: 20px; }
   .pagenav { display: flex; gap: 14px; font-family: var(--display); font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 4px; }
   .pagenav a { color: var(--ink-dim); text-decoration: none; padding-bottom: 3px; border-bottom: 2px solid transparent; }
+  .pagenav a:hover { color: var(--amber); }
   .pagenav a.current { color: var(--amber-bright); border-bottom-color: var(--amber); }
   .eyebrow { font-family: var(--display); font-size: 12.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--amber); font-weight: 600; }
   h1 { font-family: var(--display); font-weight: 700; font-size: clamp(26px, 4vw, 36px); margin: 2px 0 4px; color: #182430; }
   .meta-line { color: var(--ink-dim); font-size: 13px; font-family: var(--mono); font-variant-numeric: tabular-nums; }
   section { display: flex; flex-direction: column; gap: 12px; }
+  .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
   h2 { font-family: var(--display); font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink); font-weight: 700; margin: 0; }
   .hint { font-size: 12.5px; color: var(--ink-faint); }
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: 3px; padding: 16px 18px; }
@@ -85,12 +87,18 @@
       <h2>GitHub Actions workflows</h2>
       <span class="hint">Most recent run of each — this page never triggers or waits on any of them, it only reads their last known result.</span>
     </div>
-    <div class="card"><table id="workflowsTable"></table></div>
+    <div class="card"><table id="workflowsTable">
+      <thead><tr><th scope="col">Workflow</th><th scope="col">Last run</th><th scope="col">When</th></tr></thead>
+      <tbody id="workflowsTableBody"></tbody>
+    </table></div>
   </section>
 
   <section>
     <div class="section-head"><h2>GitHub Pages</h2></div>
-    <div class="card"><table id="pagesTable"></table></div>
+    <div class="card"><table id="pagesTable">
+      <thead><tr><th scope="col">Page</th><th scope="col" class="num">HTTP</th></tr></thead>
+      <tbody id="pagesTableBody"></tbody>
+    </table></div>
   </section>
 
   <section>
@@ -131,8 +139,10 @@
     if (hr < 48) return hr + ' h ago';
     return Math.round(hr / 24) + ' d ago';
   }
-  function dot(ok) {
-    return '<span class="dot ' + (ok === true ? 'ok' : ok === false ? 'bad' : 'unknown') + '"></span>';
+  function dot(ok, label) {
+    var cls = ok === true ? 'ok' : ok === false ? 'bad' : 'unknown';
+    var text = label || (ok === true ? 'healthy' : ok === false ? 'failing' : 'unknown');
+    return '<span class="dot ' + cls + '" role="img" aria-label="' + esc(text) + '" title="' + esc(text) + '"></span>';
   }
 
   document.getElementById('metaLine').textContent = 'Generated ' + fmtWhen(payload.generatedAt) + ' (' + ago(payload.generatedAt) + ') · all times Europe/Stockholm';
@@ -158,17 +168,18 @@
   }
   document.getElementById('dbCard').innerHTML = dbCardHtml;
 
-  document.getElementById('workflowsTable').innerHTML = '<tr><th>Workflow</th><th>Last run</th><th>When</th></tr>' +
+  document.getElementById('workflowsTableBody').innerHTML =
     (payload.workflows || []).map(function (w) {
       var ok = w.conclusion === 'success' ? true : (w.conclusion ? false : null);
       var label = w.status === 'in_progress' ? 'running…' : (w.conclusion || w.status || '–');
       var linked = w.url ? '<a href="' + esc(w.url) + '" target="_blank" rel="noopener">' + esc(label) + '</a>' : esc(label);
-      return '<tr><td class="row-label">' + dot(ok) + esc(w.label) + '</td><td>' + linked + '</td><td>' + esc(fmtWhen(w.at)) + (w.at ? ' <span class="hint">(' + ago(w.at) + ')</span>' : '') + '</td></tr>';
+      return '<tr><td class="row-label">' + dot(ok, label) + esc(w.label) + '</td><td>' + linked + '</td><td>' + esc(fmtWhen(w.at)) + (w.at ? ' <span class="hint">(' + ago(w.at) + ')</span>' : '') + '</td></tr>';
     }).join('');
 
-  document.getElementById('pagesTable').innerHTML = '<tr><th>Page</th><th class="num">HTTP</th></tr>' +
+  document.getElementById('pagesTableBody').innerHTML =
     (payload.pages || []).map(function (p) {
-      return '<tr><td class="row-label">' + dot(p.ok) + '<a href="' + esc(p.path) + '">' + esc(p.label) + '</a></td><td class="num">' + esc(p.statusCode || 'no response') + '</td></tr>';
+      var label = p.ok ? 'reachable' : 'unreachable';
+      return '<tr><td class="row-label">' + dot(p.ok, label) + '<a href="' + esc(p.path) + '">' + esc(p.label) + '</a></td><td class="num">' + esc(p.statusCode || 'no response') + '</td></tr>';
     }).join('');
 
   var si = payload.staticIndex;

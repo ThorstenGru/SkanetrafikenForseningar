@@ -21,12 +21,18 @@ concurrency:
 jobs:
   scan:
     runs-on: ubuntu-latest
+    # Normal runs take ~1-2 min. Bounded so a hung Trafiklab/Supabase call
+    # can't occupy this concurrency group for hours and starve every
+    # scheduled run behind it -- the same class of bug already fixed once
+    # for scan-vs-backfill, just scan-vs-itself this time.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
 
       - name: Install dependencies
         run: pip install -r requirements.txt
@@ -45,8 +51,17 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/static_index.sqlite
           git diff --cached --quiet || git commit -m "Static index refresh: $(date -u +'%Y-%m-%d %H:%M UTC')"
-          git pull --rebase origin master
-          git push
+          # Retries: scan.yml and backfill.yml run in separate concurrency
+          # groups on purpose (see backfill.yml's own note), so they can now
+          # genuinely race on this push. A single pull+push attempt only
+          # protects against a race that already happened before the pull.
+          for attempt in 1 2 3; do
+            git pull --rebase origin master && git push && exit 0
+            echo "push attempt $attempt failed, retrying..."
+            sleep $((attempt * 5))
+          done
+          echo "::error::git push failed after 3 attempts"
+          exit 1
 
       - name: Build content pages
         uses: ./.github/actions/build-content-pages
