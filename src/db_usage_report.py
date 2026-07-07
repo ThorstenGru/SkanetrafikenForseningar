@@ -21,8 +21,7 @@ def main():
                       pg_size_pretty(pg_relation_size(relid)) AS table_size,
                       pg_size_pretty(pg_total_relation_size(relid) - pg_relation_size(relid)) AS index_size,
                       n_live_tup AS approx_rows
-               FROM pg_catalog.pg_statio_user_tables
-               JOIN pg_stat_user_tables USING (relid)
+               FROM pg_stat_user_tables
                ORDER BY pg_total_relation_size(relid) DESC"""
         )
         print("\n%-28s %10s %10s %10s %12s" % ("table", "total", "table", "indexes", "approx_rows"))

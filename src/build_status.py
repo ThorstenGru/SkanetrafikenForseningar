@@ -71,8 +71,7 @@ def db_table_sizes():
         total = cur.fetchone()[0]
         cur.execute(
             """SELECT relname, pg_size_pretty(pg_total_relation_size(relid)), n_live_tup
-               FROM pg_catalog.pg_statio_user_tables
-               JOIN pg_stat_user_tables USING (relid)
+               FROM pg_stat_user_tables
                ORDER BY pg_total_relation_size(relid) DESC LIMIT 12"""
         )
         tables = [{"name": n, "size": s, "rows": r} for n, s, r in cur.fetchall()]
