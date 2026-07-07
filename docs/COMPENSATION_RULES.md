@@ -557,3 +557,74 @@ reasoning about it, fixing what was found) rather than delegating to a
 research/review agent — the same turn's earlier legal-research request
 fanned out into 30+ sub-agents and hit the session's usage limit, so a
 contained, single-actor review was the deliberately safer choice here.
+
+## 17. Print Claim — filling and storing the actual PDF, 2026-07-07
+
+Requested by the user 2026-07-07: split "checked out" into three real,
+separate steps (a form is printed and signed long before it's mailed,
+and a claim number only exists once Skånetrafiken has responded), and
+have the app itself fill the official paper form instead of the
+previous plan of asking Claude to do it locally each time.
+
+**This reverses §14's "personal details never touch Supabase, ever."**
+That line still holds for `claim_tracking` (still only enums + a
+self-chosen claim number, still openly readable). What changed is that
+the *filled PDF* — which necessarily contains name and home address —
+is now deliberately stored in Supabase, in a new private bucket,
+because the user asked for it explicitly and confirmed the security
+trade-off below.
+
+**How the personal-details boundary is actually kept:** first name,
+last name, street, postal code, city, and (optionally) the ticket ID
+live **only in the browser's own `localStorage`** (key
+`skaneClaimMyDetails`), entered once via "Edit my printing details" and
+reused from then on. They are never sent to `claim_tracking`, and never
+appear in the built static page's own JSON payload (`__DATA_JSON__` is
+fully public with no gate at all — embedding them there would be worse
+than not gating them). Personnummer, mobile, e-post, bank/IBAN/BIC, and
+the signature are never collected or filled — same hard line as §14,
+unchanged.
+
+**The form itself is filled, not retyped.** The blank official PDF
+(`blankett_forseningsersattning_tap.pdf`, checked into the repo as
+`src/assets/claim_form_template.pdf` — it's Skånetrafiken's own public,
+blank form, no personal data in it) is not a fillable AcroForm; it's a
+flat printed sheet with hand-drawn per-digit boxes and circles to mark,
+whose reverse side doubles as a fold-and-tape return envelope. Exact
+box/circle coordinates were measured directly off the template's own
+vector layout with PyMuPDF (in a one-off local script, not committed)
+and hard-coded into `claims_template.html`'s client-side fill function,
+which uses pdf-lib (loaded from a CDN) to overlay: name, address,
+ticket ID, date of travel, route/from/to/times, the matching
+delay-length circle, compensation-type circle, and payout-method
+circle — nothing else. The rendered result is visually close to a
+hand-filled form; it is not pixel-perfect, and the user should glance
+it over before signing.
+
+**Storage: `claim_forms` bucket, gated by the existing passphrase, not
+by real auth.** This site has no login — the anon key and even the
+`claim_tracking` write passphrase are both readable in the deployed
+page's own JavaScript. Given that, the strongest gate available for the
+new bucket without adding real Supabase Auth (still judged overkill for
+this single-user tool, per §14) is the same shared passphrase already
+accepted for `claim_tracking` writes — added by
+`src/migrations/007_claim_form_printing.sql` as SELECT/INSERT/UPDATE
+policies on `storage.objects` scoped to `bucket_id = 'claim_forms'`.
+Explicitly confirmed with the user (2026-07-07): this stops casual or
+bot access, not a determined attacker who reads the page's own JS — an
+accepted trade-off for this document specifically because it's what
+the user asked to store, not a default this project would pick on its
+own for a document containing a home address.
+
+**No website can print silently.** "Print Claim" fills the PDF, uploads
+it, records `printed_at`/`filled_pdf_path` on the `claim_tracking` row,
+then opens the filled PDF in a hidden iframe and calls the browser's
+own `print()` — the OS print dialog still appears and still needs one
+click. That is the ceiling for any browser, by design, for any site.
+
+**Lifecycle, restated (supersedes §15's two-stage "checked out"):**
+cart → checked out (`claimed=true`) → **printed** (`printed_at` set,
+`filled_pdf_path` recorded; requires compensation type + payout method
+already chosen) → archived (`mailed=true`, now requires `printed_at`
+first). The claim-number input is only rendered once `mailed=true` —
+before that it's premature, since Skånetrafiken hasn't responded yet.
