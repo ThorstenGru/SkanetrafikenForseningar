@@ -193,12 +193,24 @@ def backfill_day(day, interval_hours, trip_meta, stops, cur):
         except Exception as exc:
             error = str(exc)
             print("  ERROR processing snapshot at %s: %s" % (now, error), file=sys.stderr)
+            # Without this, a genuine Postgres-level error (e.g. a bad
+            # historical snapshot tripping a constraint) leaves the
+            # connection in an aborted-transaction state, and the very next
+            # statement -- the record_scan_run() call right below -- then
+            # itself raises InFailedSqlTransaction, uncaught, killing the
+            # entire multi-day backfill instead of just skipping this mark.
+            # Committing per-mark (below) rather than once per day, as this
+            # used to, is what makes a rollback here safe -- otherwise it
+            # would also discard every earlier mark this same day that
+            # hadn't been committed yet.
+            cur.connection.rollback()
 
         db.record_scan_run(cur, {
             "run_at": now, "delays_seen": delays_seen, "delays_new": delays_new,
             "cancellations_seen": cancellations_seen, "alerts_seen": alerts_seen, "alerts_new": alerts_new,
             "static_refreshed": False, "error": error,
         })
+        cur.connection.commit()
         marks_processed += 1
     return marks_processed
 

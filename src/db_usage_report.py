@@ -5,6 +5,7 @@ Usage:
     python src/db_usage_report.py
 """
 
+import config
 import db
 
 
@@ -31,25 +32,29 @@ def main():
         # How much of `delays` is trivial noise (GTFS-RT reports nonzero
         # delay constantly, down to single seconds) versus delays that
         # could ever matter for a claim (>=20 min) or are worth watching
-        # (1-20 min)? Answers "what can we actually afford to drop".
+        # (1-20 min)? Answers "what can we actually afford to drop". Buckets
+        # on max_abs_delay_sec, which db.py already computes and stores at
+        # write time -- recomputing GREATEST(arrival/departure) here would
+        # just duplicate that for a full-table scan of the exact table
+        # today's storage incident was about. Boundaries come from the same
+        # config constants the write filter and compensation eligibility
+        # actually use, so this report can't silently drift from policy.
+        eligible_sec = config.MIN_DELAY_FOR_COMPENSATION_MIN * 60
         cur.execute(
             """SELECT
                    CASE
-                       WHEN GREATEST(COALESCE(ABS(arrival_delay_sec), 0), COALESCE(ABS(departure_delay_sec), 0)) = 0
-                           THEN '0s (endpoint/irregular only, no real delay)'
-                       WHEN GREATEST(COALESCE(ABS(arrival_delay_sec), 0), COALESCE(ABS(departure_delay_sec), 0)) < 60
-                           THEN '1-59s (noise)'
-                       WHEN GREATEST(COALESCE(ABS(arrival_delay_sec), 0), COALESCE(ABS(departure_delay_sec), 0)) < 300
-                           THEN '1-5 min'
-                       WHEN GREATEST(COALESCE(ABS(arrival_delay_sec), 0), COALESCE(ABS(departure_delay_sec), 0)) < 1200
-                           THEN '5-20 min'
+                       WHEN max_abs_delay_sec = 0 THEN '0s (endpoint/irregular only, no real delay)'
+                       WHEN max_abs_delay_sec < 60 THEN '1-59s (noise)'
+                       WHEN max_abs_delay_sec < %(floor)s THEN '1-5 min'
+                       WHEN max_abs_delay_sec < %(eligible)s THEN '5-20 min'
                        ELSE '>=20 min (compensation-eligible range)'
                    END AS bucket,
                    COUNT(*) AS rows,
-                   pg_size_pretty(SUM(pg_column_size(d.*))::bigint) AS approx_bytes
-               FROM delays d
+                   pg_size_pretty((COUNT(*) * pg_relation_size('delays') / NULLIF(SUM(COUNT(*)) OVER (), 0))::bigint) AS approx_bytes
+               FROM delays
                GROUP BY 1
-               ORDER BY 1"""
+               ORDER BY 1""",
+            {"floor": config.MIN_DELAY_TO_RECORD_SEC, "eligible": eligible_sec},
         )
         print("\nDelay-magnitude breakdown (approx bytes = sum of each row's on-disk width, indexes not included):")
         print("%-45s %10s %14s" % ("bucket", "rows", "approx_size"))

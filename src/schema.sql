@@ -1,5 +1,14 @@
 -- Skånetrafiken förseningar — Postgres (Supabase) schema.
 -- Run once against a fresh project. Safe to re-run (IF NOT EXISTS everywhere).
+--
+-- This file alone is NOT the current schema -- it's the original baseline,
+-- frozen on purpose (see docs/RUNBOOK.md#applying-migrations). Every
+-- change since then lives in src/migrations/, numbered in order, and must
+-- ALL be applied for the application code to actually work (e.g.
+-- housekeeping.py references housekeeping_runs.line_anomalies_deleted,
+-- which only exists after 008_split_housekeeping_counter.sql). A database
+-- provisioned from just this file will fail on the first script that
+-- touches a column a later migration added.
 
 CREATE TABLE IF NOT EXISTS delays (
     trip_id                    TEXT NOT NULL,

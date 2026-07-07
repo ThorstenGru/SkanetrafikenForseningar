@@ -147,6 +147,14 @@ Migrations are written to be safe to re-run (`CREATE TABLE IF NOT EXISTS`,
 `DROP POLICY IF EXISTS` before `CREATE POLICY`), so re-applying one after a
 passphrase rotation or a policy tweak just updates it in place.
 
+**A database provisioned from `schema.sql` alone is not the current
+schema.** Every migration in `src/migrations/` must be applied, in order,
+for the application code to actually run — e.g. `housekeeping.py`
+references a column that only exists after `008_split_housekeeping_counter.sql`,
+and `scan.py`/`cleanup_delay_noise.py` need `010_add_origin_stop_flag.sql`.
+`004`/`006`/`009` are destructive one-off data wipes, not schema changes —
+don't re-run those as part of setting up a fresh database.
+
 ## Inspect the database directly
 
 ```bash

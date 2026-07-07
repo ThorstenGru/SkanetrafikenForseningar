@@ -18,7 +18,7 @@ DELAY_COLUMNS = [
     "trip_id", "trip_start_date", "route_id", "route_short_name", "vehicle_type",
     "trip_number", "distance_km", "sommarticket_valid", "direction_id",
     "destination_stop_name", "stop_id", "stop_name", "stop_sequence", "is_final_stop",
-    "stop_schedule_relationship", "trip_schedule_relationship",
+    "is_origin_stop", "stop_schedule_relationship", "trip_schedule_relationship",
     "arrival_delay_sec", "departure_delay_sec", "arrival_time", "departure_time",
     "scheduled_arrival", "scheduled_departure",
 ]
@@ -41,12 +41,18 @@ def upsert_delays_batch(cur, rows, now):
         """INSERT INTO delays (%s, max_abs_delay_sec, first_seen_at, last_seen_at)
            VALUES %%s
            ON CONFLICT (trip_id, trip_start_date, stop_sequence) DO UPDATE SET
-               arrival_delay_sec = EXCLUDED.arrival_delay_sec,
-               departure_delay_sec = EXCLUDED.departure_delay_sec,
-               arrival_time = EXCLUDED.arrival_time,
-               departure_time = EXCLUDED.departure_time,
-               stop_schedule_relationship = EXCLUDED.stop_schedule_relationship,
-               trip_schedule_relationship = EXCLUDED.trip_schedule_relationship,
+               -- Only let an incoming row overwrite the observed values when
+               -- it's at least as new as what's already stored. Without this,
+               -- a backfill run replaying an older KoDa snapshot's own
+               -- timestamp as `now` could silently clobber a more-current
+               -- live-scanned delay/time with a stale one, even though
+               -- last_seen_at (GREATEST'd below) keeps correctly advancing.
+               arrival_delay_sec = CASE WHEN EXCLUDED.last_seen_at >= delays.last_seen_at THEN EXCLUDED.arrival_delay_sec ELSE delays.arrival_delay_sec END,
+               departure_delay_sec = CASE WHEN EXCLUDED.last_seen_at >= delays.last_seen_at THEN EXCLUDED.departure_delay_sec ELSE delays.departure_delay_sec END,
+               arrival_time = CASE WHEN EXCLUDED.last_seen_at >= delays.last_seen_at THEN EXCLUDED.arrival_time ELSE delays.arrival_time END,
+               departure_time = CASE WHEN EXCLUDED.last_seen_at >= delays.last_seen_at THEN EXCLUDED.departure_time ELSE delays.departure_time END,
+               stop_schedule_relationship = CASE WHEN EXCLUDED.last_seen_at >= delays.last_seen_at THEN EXCLUDED.stop_schedule_relationship ELSE delays.stop_schedule_relationship END,
+               trip_schedule_relationship = CASE WHEN EXCLUDED.last_seen_at >= delays.last_seen_at THEN EXCLUDED.trip_schedule_relationship ELSE delays.trip_schedule_relationship END,
                max_abs_delay_sec = GREATEST(delays.max_abs_delay_sec, EXCLUDED.max_abs_delay_sec),
                last_seen_at = GREATEST(delays.last_seen_at, EXCLUDED.last_seen_at),
                poll_count = delays.poll_count + 1

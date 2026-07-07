@@ -46,27 +46,25 @@ PAGE_PATHS = [
 SITE_BASE = "https://thorstengru.github.io/SkanetrafikenForseningar/"
 
 
-def check_database():
+def probe_database():
     """A bare SELECT 1 with a short timeout -- the whole point is to fail
     fast and clearly rather than hang, which is exactly what happened
-    during the 2026-07-07 disk-full incident this page was built for."""
+    during the 2026-07-07 disk-full incident this page was built for. The
+    table-size breakdown reuses this same connection instead of opening a
+    second one -- this script runs 96x/day and is meant to stay as light
+    on the database as possible."""
     start = time.time()
     try:
         conn = psycopg2.connect(config.database_url(), connect_timeout=DB_PROBE_TIMEOUT_SEC)
         cur = conn.cursor()
         cur.execute("SELECT 1")
         cur.fetchone()
-        cur.close()
-        conn.close()
-        return {"ok": True, "latencyMs": round((time.time() - start) * 1000), "error": None}
+        database = database_result(True, start)
     except Exception as exc:
-        return {"ok": False, "latencyMs": round((time.time() - start) * 1000), "error": str(exc)[:300]}
+        return database_result(False, start, exc), None
 
-
-def db_table_sizes():
+    table_sizes = None
     try:
-        conn = psycopg2.connect(config.database_url(), connect_timeout=DB_PROBE_TIMEOUT_SEC)
-        cur = conn.cursor()
         cur.execute("SELECT pg_size_pretty(pg_database_size(current_database()))")
         total = cur.fetchone()[0]
         cur.execute(
@@ -75,11 +73,17 @@ def db_table_sizes():
                ORDER BY pg_total_relation_size(relid) DESC LIMIT 12"""
         )
         tables = [{"name": n, "size": s, "rows": r} for n, s, r in cur.fetchall()]
+        table_sizes = {"total": total, "tables": tables}
+    except Exception:
+        pass
+    finally:
         cur.close()
         conn.close()
-        return {"total": total, "tables": tables}
-    except Exception:
-        return None
+    return database, table_sizes
+
+
+def database_result(ok, start, exc=None):
+    return {"ok": ok, "latencyMs": round((time.time() - start) * 1000), "error": str(exc)[:300] if exc else None}
 
 
 def check_workflows():
@@ -153,11 +157,11 @@ def main():
     parser.add_argument("--out", default=os.path.join(config.REPO_ROOT, "status.html"))
     args = parser.parse_args()
 
-    database = check_database()
+    database, table_sizes = probe_database()
     payload = {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "database": database,
-        "tableSizes": db_table_sizes() if database["ok"] else None,
+        "tableSizes": table_sizes,
         "workflows": check_workflows(),
         "pages": check_pages(),
         "staticIndex": static_index_info(),

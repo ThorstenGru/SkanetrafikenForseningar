@@ -26,9 +26,9 @@ def load_trip_meta(static_conn):
         route_types[rid] = rt
     stops = dict(static_conn.execute("SELECT stop_id, stop_name FROM stops").fetchall())
     trip_meta = {}
-    for (trip_id, route_id, direction_id, trip_number, origin_stop_id, dest_stop_id, dest_stop_name,
+    for (trip_id, route_id, direction_id, trip_number, dest_stop_id, dest_stop_name,
          final_seq, distance_km, sommarticket_valid) in static_conn.execute(
-        """SELECT trip_id, route_id, direction_id, trip_number, origin_stop_id, destination_stop_id,
+        """SELECT trip_id, route_id, direction_id, trip_number, destination_stop_id,
                   destination_stop_name, final_stop_sequence, distance_km, sommarticket_valid
            FROM trip_meta"""
     ):
@@ -38,7 +38,6 @@ def load_trip_meta(static_conn):
             "vehicle_type": config.route_type_label(route_types.get(route_id)),
             "trip_number": trip_number or None,
             "direction_id": direction_id,
-            "origin_stop_id": origin_stop_id,
             "destination_stop_name": dest_stop_name,
             "final_stop_sequence": final_seq,
             "distance_km": distance_km,
@@ -101,7 +100,6 @@ def process_trip_updates(feed, trip_meta, stops, cur, now):
         destination_stop_name = meta.get("destination_stop_name", "")
         direction_id = meta.get("direction_id")
         final_seq = meta.get("final_stop_sequence")
-        origin_stop_id = meta.get("origin_stop_id")
 
         # Every trip we see at all, regardless of delay — the presence log
         # that coverage_check.py diffs against the static schedule.
@@ -116,7 +114,7 @@ def process_trip_updates(feed, trip_meta, stops, cur, now):
             })
             continue
 
-        for stu in tu.stop_time_update:
+        for idx, stu in enumerate(tu.stop_time_update):
             arrival_delay = stu.arrival.delay if stu.HasField("arrival") and stu.arrival.HasField("delay") else None
             departure_delay = stu.departure.delay if stu.HasField("departure") and stu.departure.HasField("delay") else None
             arrival_time = stu.arrival.time if stu.HasField("arrival") and stu.arrival.HasField("time") else None
@@ -139,7 +137,17 @@ def process_trip_updates(feed, trip_meta, stops, cur, now):
             # docs/COMPENSATION_RULES.md's note on unconfirmed endpoints).
             # Everything in between stays delay-only, to avoid multiplying
             # every scan's write volume by full per-trip stop counts.
-            is_endpoint = (stu.stop_id == origin_stop_id) or (final_seq is not None and stu.stop_sequence == final_seq)
+            #
+            # Origin is identified by position (idx == 0), not stop_id --
+            # GTFS-RT guarantees stop_time_update is ordered by the vehicle's
+            # visit sequence, and a circular/loop route can revisit the same
+            # physical stop_id later in the same trip (see schema.sql's note
+            # on why `delays` is keyed on stop_sequence, not stop_id). Match
+            # by stop_id would falsely tag that later revisit as the origin
+            # too, force-recording it regardless of delay.
+            is_origin = idx == 0
+            is_final = final_seq is not None and stu.stop_sequence == final_seq
+            is_endpoint = is_origin or is_final
             if not is_delay and not is_irregular and not is_endpoint:
                 continue
 
@@ -160,7 +168,8 @@ def process_trip_updates(feed, trip_meta, stops, cur, now):
                 "stop_id": stu.stop_id,
                 "stop_name": stops.get(stu.stop_id, ""),
                 "stop_sequence": stu.stop_sequence,
-                "is_final_stop": bool(final_seq is not None and stu.stop_sequence == final_seq),
+                "is_final_stop": is_final,
+                "is_origin_stop": is_origin,
                 "stop_schedule_relationship": stop_sched_rel,
                 "trip_schedule_relationship": trip_sched_rel,
                 "arrival_delay_sec": arrival_delay,
