@@ -36,7 +36,6 @@ def upsert_delays_batch(cur, rows, now):
         tuple(row[c] for c in DELAY_COLUMNS) + (max(abs(row.get("arrival_delay_sec") or 0), abs(row.get("departure_delay_sec") or 0)), now, now)
         for row in rows
     ]
-    template = "(" + ", ".join(["%s"] * (len(DELAY_COLUMNS) + 3)) + ")"
     results = psycopg2.extras.execute_values(
         cur,
         """INSERT INTO delays (%s, max_abs_delay_sec, first_seen_at, last_seen_at)
@@ -49,11 +48,10 @@ def upsert_delays_batch(cur, rows, now):
                stop_schedule_relationship = EXCLUDED.stop_schedule_relationship,
                trip_schedule_relationship = EXCLUDED.trip_schedule_relationship,
                max_abs_delay_sec = GREATEST(delays.max_abs_delay_sec, EXCLUDED.max_abs_delay_sec),
-               last_seen_at = EXCLUDED.last_seen_at,
+               last_seen_at = GREATEST(delays.last_seen_at, EXCLUDED.last_seen_at),
                poll_count = delays.poll_count + 1
            RETURNING (xmax = 0) AS inserted""" % ", ".join(DELAY_COLUMNS),
         values,
-        template=template,
         page_size=1000,
         fetch=True,
     )
@@ -75,7 +73,7 @@ def upsert_cancellations_batch(cur, rows, now):
             distance_km, sommarticket_valid, destination_stop_name, first_seen_at, last_seen_at)
            VALUES %s
            ON CONFLICT (trip_id, trip_start_date) DO UPDATE SET
-               last_seen_at = EXCLUDED.last_seen_at,
+               last_seen_at = GREATEST(trip_cancellations.last_seen_at, EXCLUDED.last_seen_at),
                poll_count = trip_cancellations.poll_count + 1
            RETURNING (xmax = 0) AS inserted""",
         values,
@@ -94,7 +92,7 @@ def upsert_seen_trips_batch(cur, rows, now):
         """INSERT INTO seen_trips (trip_id, trip_start_date, route_short_name, first_seen_at, last_seen_at)
            VALUES %s
            ON CONFLICT (trip_id, trip_start_date) DO UPDATE SET
-               last_seen_at = EXCLUDED.last_seen_at,
+               last_seen_at = GREATEST(seen_trips.last_seen_at, EXCLUDED.last_seen_at),
                poll_count = seen_trips.poll_count + 1""",
         values,
     )
@@ -116,7 +114,7 @@ def upsert_alerts_batch(cur, alerts, now):
                header_text, description_text, active_period_start, active_period_end,
                first_seen_at, last_seen_at
            ) VALUES %s
-           ON CONFLICT (alert_uid) DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at
+           ON CONFLICT (alert_uid) DO UPDATE SET last_seen_at = GREATEST(alerts.last_seen_at, EXCLUDED.last_seen_at)
            RETURNING alert_uid, (xmax = 0) AS inserted""",
         values,
         fetch=True,

@@ -231,7 +231,7 @@ def fetch_detail_rows(cur, start_date, end_date, single_date):
             "tripNumber": t["tripNumber"], "dest": t["dest"], "distanceKm": t["distanceKm"],
             "status": classify_trip(t["final_relationship"], t["final_delay_sec"], t["is_cancelled"]),
             "finalDelayMin": round(t["final_delay_sec"] / 60, 1) if t["final_delay_sec"] is not None else None,
-            "maxDelayMin": round(t["max_delay_sec"] / 60, 1) if t["max_delay_sec"] else None,
+            "maxDelayMin": round(t["max_delay_sec"] / 60, 1) if t["max_delay_sec"] is not None else None,
             "reason": reason,
             "stops": sorted(t["stops"], key=lambda s: s["seq"] if s["seq"] is not None else 0),
             "firstSeen": t["firstSeen"].isoformat(), "lastSeen": t["lastSeen"].isoformat(), "polls": t["polls"],
@@ -251,7 +251,7 @@ def main():
         single_date = date(int(args.date[0:4]), int(args.date[4:6]), int(args.date[6:8]))
         start_date = end_date = single_date
     else:
-        end_date = date.today()
+        end_date = datetime.now(config.LOCAL_TZ).date()
         start_date = end_date - timedelta(days=args.days - 1)
 
     conn = db.connect()

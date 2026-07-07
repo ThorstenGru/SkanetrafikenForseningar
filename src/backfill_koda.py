@@ -162,7 +162,13 @@ def backfill_day(day, interval_hours, trip_meta, stops, cur):
     if not tu_snapshots and not alert_snapshots:
         return 0
 
-    tolerance = max(900, interval_hours * 1800)  # up to half an interval, min 15 min
+    # Half the interval, so adjacent marks can't both claim the same
+    # snapshot -- a flat 900s (15 min) floor used to dominate this for any
+    # interval_hours < 0.5, which is exactly the 15-min cadence this
+    # backfill is meant to match, causing the same KoDa snapshot to double
+    # as the nearest match for two consecutive marks. The floor now only
+    # guards against clock jitter, not against fine-grained cadences.
+    tolerance = max(60, interval_hours * 1800)
     marks_processed = 0
     for mark in _target_marks_utc(day, interval_hours):
         tu_pick = _pick_nearest(tu_snapshots, mark, tolerance)

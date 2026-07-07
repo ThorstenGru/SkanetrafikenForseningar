@@ -19,8 +19,11 @@ import static_index
 
 
 def load_trip_meta(static_conn):
-    routes = dict((rid, short) for rid, short, _rt in static_conn.execute("SELECT route_id, short_name, route_type FROM routes"))
-    route_types = dict(static_conn.execute("SELECT route_id, route_type FROM routes").fetchall())
+    routes = {}
+    route_types = {}
+    for rid, short, rt in static_conn.execute("SELECT route_id, short_name, route_type FROM routes"):
+        routes[rid] = short
+        route_types[rid] = rt
     stops = dict(static_conn.execute("SELECT stop_id, stop_name FROM stops").fetchall())
     trip_meta = {}
     for (trip_id, route_id, direction_id, trip_number, dest_stop_id, dest_stop_name,
@@ -58,9 +61,14 @@ def _epoch_to_dt(epoch):
     return datetime.fromtimestamp(epoch, tz=timezone.utc) if epoch is not None else None
 
 
-def _parse_start_date(start_date_str):
+def _parse_start_date(start_date_str, now):
     if not start_date_str:
-        return date.today()
+        # Falls back to the scan's own reference instant, converted to
+        # Europe/Stockholm -- not date.today(), which is UTC (and thus the
+        # previous calendar date) for the last couple hours of every
+        # Stockholm day on a GitHub Actions runner. See config.py's own
+        # note on this exact class of bug.
+        return now.astimezone(config.LOCAL_TZ).date()
     return date(int(start_date_str[0:4]), int(start_date_str[4:6]), int(start_date_str[6:8]))
 
 
@@ -79,7 +87,7 @@ def process_trip_updates(feed, trip_meta, stops, cur, now):
             # (unassigned-vehicle noise in the feed) — nothing meaningful to
             # key them on, and they'd collide with each other on insert.
             continue
-        start_date = _parse_start_date(tu.trip.start_date)
+        start_date = _parse_start_date(tu.trip.start_date, now)
         trip_sched_rel = config.TRIP_SCHEDULE_RELATIONSHIP_LABELS.get(tu.trip.schedule_relationship, str(tu.trip.schedule_relationship))
 
         meta = trip_meta.get(trip_id, {})

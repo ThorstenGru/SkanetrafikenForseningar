@@ -39,10 +39,9 @@ def database_url():
     return get_key("DATABASE_URL")
 
 
-def get_key(env_var, fallback=None):
-    """Read an API key from the environment (GitHub Actions secret), with an
-    optional fallback for local ad-hoc testing."""
-    value = os.environ.get(env_var, fallback)
+def get_key(env_var):
+    """Read an API key from the environment (GitHub Actions secret)."""
+    value = os.environ.get(env_var)
     if not value:
         raise RuntimeError(
             "Saknar API-nyckel: satt miljovariabeln %s (t.ex. via GitHub Actions secret)." % env_var

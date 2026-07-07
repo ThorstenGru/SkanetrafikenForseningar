@@ -31,7 +31,7 @@ import json
 import os
 import shutil
 import sqlite3
-from datetime import date, timedelta
+from datetime import datetime, timedelta
 
 import config
 import db
@@ -109,7 +109,7 @@ def main():
     parser.add_argument("--out", default=os.path.join(config.REPO_ROOT, "claims.html"))
     args = parser.parse_args()
 
-    end_date = date.today()
+    end_date = datetime.now(config.LOCAL_TZ).date()
     start_date = end_date - timedelta(days=config.RETENTION_DAYS - 1)
     start_date = max(start_date, config.sommarbiljett_purchased_at().date())
 

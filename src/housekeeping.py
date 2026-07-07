@@ -6,7 +6,7 @@ Usage:
     python src/housekeeping.py
 """
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 import config
 import db
@@ -14,7 +14,7 @@ import db
 
 def main():
     now = datetime.now(timezone.utc)
-    cutoff_date = date.today() - timedelta(days=config.RETENTION_DAYS)
+    cutoff_date = datetime.now(config.LOCAL_TZ).date() - timedelta(days=config.RETENTION_DAYS)
     cutoff_ts = now - timedelta(days=config.RETENTION_DAYS)
 
     conn = db.connect()
@@ -35,7 +35,7 @@ def main():
         counts["line_visibility_deleted"] = cur.rowcount
 
         cur.execute("DELETE FROM line_visibility_anomalies WHERE trip_start_date < %s", (cutoff_date,))
-        counts["line_visibility_deleted"] += cur.rowcount
+        counts["line_anomalies_deleted"] = cur.rowcount
 
         # Alerts have no trip_start_date — key off when we last saw them active.
         cur.execute("DELETE FROM alerts WHERE last_seen_at < %s", (cutoff_ts,))
@@ -54,16 +54,17 @@ def main():
         cur.execute(
             """INSERT INTO housekeeping_runs
                (run_at, cutoff_date, delays_deleted, cancellations_deleted, seen_trips_deleted,
-                line_visibility_deleted, alerts_deleted, scan_runs_deleted, error)
+                line_visibility_deleted, line_anomalies_deleted, alerts_deleted, scan_runs_deleted, error)
                VALUES (%(run_at)s, %(cutoff_date)s, %(delays_deleted)s, %(cancellations_deleted)s,
-                       %(seen_trips_deleted)s, %(line_visibility_deleted)s, %(alerts_deleted)s,
-                       %(scan_runs_deleted)s, %(error)s)""",
+                       %(seen_trips_deleted)s, %(line_visibility_deleted)s, %(line_anomalies_deleted)s,
+                       %(alerts_deleted)s, %(scan_runs_deleted)s, %(error)s)""",
             {
                 "run_at": now, "cutoff_date": cutoff_date, "error": error,
                 "delays_deleted": counts.get("delays_deleted"),
                 "cancellations_deleted": counts.get("cancellations_deleted"),
                 "seen_trips_deleted": counts.get("seen_trips_deleted"),
                 "line_visibility_deleted": counts.get("line_visibility_deleted"),
+                "line_anomalies_deleted": counts.get("line_anomalies_deleted"),
                 "alerts_deleted": counts.get("alerts_deleted"),
                 "scan_runs_deleted": counts.get("scan_runs_deleted"),
             },
