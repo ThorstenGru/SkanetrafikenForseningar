@@ -29,6 +29,7 @@ Usage:
 import argparse
 import json
 import os
+import shutil
 import sqlite3
 from datetime import date, timedelta
 
@@ -38,6 +39,7 @@ from build_dashboard import fetch_detail_rows
 from build_compensation import compute_compensation
 
 TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "claims_template.html")
+CLAIM_FORM_PDF_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "claim_form_template.pdf")
 
 
 def load_static_lookups():
@@ -152,6 +154,12 @@ def main():
         os.makedirs(out_dir, exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as f:
         f.write(html)
+
+    # claims.html fetches this by relative URL to fill it client-side (see
+    # docs/COMPENSATION_RULES.md §16) -- needs to sit next to claims.html
+    # wherever it's built (scan.yml, backfill.yml, and deploy-pages.yml all
+    # build this page into different working copies of pages_site/).
+    shutil.copy(CLAIM_FORM_PDF_PATH, os.path.join(out_dir or ".", "claim_form_template.pdf"))
 
     eligible = sum(1 for r in claim_rows if r["calc"] == "eligible")
     with_coords = sum(1 for r in claim_rows if r["originLat"] is not None and r["destLat"] is not None)

@@ -475,6 +475,7 @@
     <div class="eyebrow">Skånetrafiken · Sommarbiljetten scope</div>
     <h1>Build a travelable set of claims, then file them</h1>
     <div class="meta-line" id="metaLine">loading…</div>
+    <button type="button" class="link-btn" id="editDetailsBtn" style="align-self:flex-start;">Edit my printing details</button>
   </header>
 
   <div class="disclaimer">
@@ -499,7 +500,7 @@
   <section id="checkedOutSection" style="display:none;">
     <div class="section-head">
       <h2>Checked out — preparing your forms</h2>
-      <span class="hint">Pick compensation type + payout for each, then tell Claude to fill the form. Once it's printed, signed, and in the mail, confirm below.</span>
+      <span class="hint">Pick compensation type + payout for each, then Print Claim to fill and print the official form. Once it's signed and in the mail, confirm below — the claim number goes in once Skånetrafiken responds.</span>
     </div>
     <div class="stats" id="checkedOutStats"></div>
     <div id="checkedOutList"></div>
@@ -561,6 +562,7 @@
 </div>
 
 <script type="application/json" id="raw-data">__DATA_JSON__</script>
+<script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
 <script>
 (function () {
   var payload = JSON.parse(document.getElementById('raw-data').textContent);
@@ -638,6 +640,190 @@
     return h;
   }
 
+  // ---- Print Claim: fill the official PDF client-side, store it, print it ----
+  //
+  // Name, address, and ticket ID live ONLY in this browser's localStorage —
+  // never sent to claim_tracking, never part of this built page's own JSON
+  // payload (which is fully public with no gate at all). The filled PDF
+  // that necessarily contains those values is the one thing deliberately
+  // uploaded, to the passphrase-gated claim_forms bucket — see
+  // docs/COMPENSATION_RULES.md §16. Personnummer, mobile, e-post, bank
+  // details, and the signature are never collected or filled — those stay
+  // hand-written on the printed page.
+  var MY_DETAILS_KEY = 'skaneClaimMyDetails';
+  function getMyDetails() {
+    try { return JSON.parse(localStorage.getItem(MY_DETAILS_KEY)) || null; }
+    catch (e) { return null; }
+  }
+  function promptMyDetails(existing) {
+    existing = existing || {};
+    var firstName = window.prompt('Förnamn (first name), for the printed form:', existing.firstName || '');
+    if (firstName === null) return null;
+    var lastName = window.prompt('Efternamn (last name):', existing.lastName || '');
+    if (lastName === null) return null;
+    var street = window.prompt('Gatuadress (street address):', existing.street || '');
+    if (street === null) return null;
+    var postal = window.prompt('Postnummer (postal code):', existing.postal || '');
+    if (postal === null) return null;
+    var city = window.prompt('Ort (city):', existing.city || '');
+    if (city === null) return null;
+    var ticketId = window.prompt('BiljettID (optional, leave blank to skip):', existing.ticketId || '');
+    if (ticketId === null) ticketId = existing.ticketId || '';
+    var details = { firstName: firstName, lastName: lastName, street: street, postal: postal, city: city, ticketId: ticketId };
+    localStorage.setItem(MY_DETAILS_KEY, JSON.stringify(details));
+    return details;
+  }
+  function ensureMyDetails() {
+    var d = getMyDetails();
+    if (d && d.firstName && d.lastName) return d;
+    return promptMyDetails(d);
+  }
+
+  // Coordinates were measured directly off the template's own vector layout
+  // (box grids, radio-button circles) with PyMuPDF, in that library's native
+  // top-down page space (origin top-left, y grows downward). pdf-lib draws
+  // bottom-up (PDF's native space), hence the PAGE_H flip below.
+  var CLAIM_FORM_PDF_URL = 'claim_form_template.pdf';
+  var PAGE_H = 841.89;
+  function py(topDownY) { return PAGE_H - topDownY; }
+  var FIELD_XY = {
+    firstName: [212, py(78)], lastName: [391, py(78)],
+    street: [33, py(100)], postal: [212, py(100)], city: [301, py(100)],
+    ticketId: [33, py(166.5)],
+    busLine: [500, py(166.9)],
+    originName: [306, py(189.5)], originTime: [500, py(189.5)],
+    destName: [308, py(211.1)], destTime: [500, py(211.1)],
+  };
+  var DATE_GRID = { x0: 322.0, x1: 476.9, y: py(166.9) };
+  var DELAY_DOTS = {
+    '20-39': [38.2, py(326.75)], '40-59': [38.2, py(339.0)],
+    '60-119': [124.3, py(326.75)], '120+': [124.3, py(339.0)],
+  };
+  var COMP_DOTS = { prisavdrag: [237.8, py(322.9)], taxi: [237.8, py(341.2)], mileage: [237.8, py(415.3)] };
+  var PAYOUT_DOTS = { voucher_sms: [38.2, py(380.5)], voucher_email: [38.2, py(392.7)], cash: [38.2, py(405.0)] };
+
+  function delayBucketKey(min) {
+    if (min === null || min === undefined) return null;
+    if (min < 20) return null;
+    if (min < 40) return '20-39';
+    if (min < 60) return '40-59';
+    if (min < 120) return '60-119';
+    return '120+';
+  }
+
+  function buildFilledClaimPdf(r, details) {
+    return fetch(CLAIM_FORM_PDF_URL).then(function (resp) {
+      if (!resp.ok) throw new Error('could not load claim form template (HTTP ' + resp.status + ')');
+      return resp.arrayBuffer();
+    }).then(function (bytes) {
+      return PDFLib.PDFDocument.load(bytes);
+    }).then(function (pdfDoc) {
+      var page = pdfDoc.getPages()[0];
+      return pdfDoc.embedFont(PDFLib.StandardFonts.Helvetica).then(function (font) {
+        var ink = PDFLib.rgb(0, 0, 0.45);
+        function text(xy, value, size) {
+          if (!value) return;
+          page.drawText(String(value), { x: xy[0], y: xy[1], size: size || 10, font: font, color: ink });
+        }
+        function dot(xy) {
+          if (!xy) return;
+          page.drawEllipse({ x: xy[0], y: xy[1], xScale: 2.6, yScale: 2.6, color: ink });
+        }
+
+        text(FIELD_XY.firstName, details.firstName);
+        text(FIELD_XY.lastName, details.lastName);
+        text(FIELD_XY.street, details.street);
+        text(FIELD_XY.postal, details.postal);
+        text(FIELD_XY.city, details.city);
+        text(FIELD_XY.ticketId, details.ticketId, 9);
+
+        var dateStr = isoDate(r.date);
+        var stepX = (DATE_GRID.x1 - DATE_GRID.x0) / dateStr.length;
+        for (var i = 0; i < dateStr.length; i++) {
+          text([DATE_GRID.x0 + i * stepX + 3, DATE_GRID.y], dateStr[i], 9);
+        }
+        text(FIELD_XY.busLine, r.line, 9);
+        text(FIELD_XY.originName, r.originName, 9);
+        text(FIELD_XY.originTime, fmtTime(r.originTimeIso), 9);
+        text(FIELD_XY.destName, r.dest, 9);
+        text(FIELD_XY.destTime, fmtTime(r.destTimeIso), 9);
+
+        var t = trackingFor(rowKey(r));
+        dot(DELAY_DOTS[delayBucketKey(r.delayUsedMin)]);
+        dot(COMP_DOTS[t.compensationType]);
+        dot(PAYOUT_DOTS[t.payoutMethod]);
+
+        return pdfDoc.save();
+      });
+    });
+  }
+
+  function claimFormsObjectUrl(path) {
+    return SB.url ? SB.url + '/storage/v1/object/claim_forms/' + encodeURIComponent(path) : null;
+  }
+  function uploadFilledPdf(path, bytes) {
+    var url = claimFormsObjectUrl(path);
+    if (!url) return Promise.reject(new Error('Supabase not configured for this build'));
+    return fetch(url, {
+      method: 'POST',
+      headers: Object.assign(sbHeaders(true), { 'Content-Type': 'application/pdf', 'x-upsert': 'true' }),
+      body: bytes,
+    }).then(function (resp) {
+      if (!resp.ok) return resp.text().then(function (t) { throw new Error('HTTP ' + resp.status + ': ' + t); });
+    });
+  }
+  function downloadFilledPdf(path) {
+    var url = claimFormsObjectUrl(path);
+    if (!url) return Promise.reject(new Error('Supabase not configured for this build'));
+    return fetch(url, { headers: sbHeaders(true) }).then(function (resp) {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp.blob();
+    });
+  }
+
+  // Opens the filled PDF in a hidden iframe and triggers the browser's own
+  // print dialog once it's loaded — the most any website can ever do is
+  // hand the OS print dialog a ready document; nothing can print silently.
+  function openAndPrintBlob(blob) {
+    var url = URL.createObjectURL(blob);
+    var iframe = document.createElement('iframe');
+    iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
+    iframe.src = url;
+    iframe.onload = function () {
+      try { iframe.contentWindow.focus(); iframe.contentWindow.print(); }
+      catch (e) { window.open(url, '_blank'); }
+    };
+    document.body.appendChild(iframe);
+  }
+
+  function handlePrintClaim(key) {
+    var r = rowsByKey[key];
+    var t = trackingFor(key);
+    if (!t.compensationType || !t.payoutMethod) { window.alert('Pick a compensation type and payout method first.'); return; }
+    var details = ensureMyDetails();
+    if (!details) return;
+    setStatus('filling form…', '');
+    buildFilledClaimPdf(r, details).then(function (bytes) {
+      var path = r.trip + '_' + isoDate(r.date) + '.pdf';
+      return uploadFilledPdf(path, bytes).then(function () {
+        return saveTrackingRow(r, { printedAt: new Date().toISOString(), filledPdfPath: path });
+      }).then(function () {
+        openAndPrintBlob(new Blob([bytes], { type: 'application/pdf' }));
+        setStatus('form filled — check the print dialog', 'ok');
+        renderCheckedOut();
+      });
+    }).catch(function (err) {
+      setStatus('⚠ could not fill/print (' + err.message + ')', 'err');
+    });
+  }
+  function handleDownloadFilled(path) {
+    downloadFilledPdf(path).then(function (blob) {
+      window.open(URL.createObjectURL(blob), '_blank');
+    }).catch(function (err) {
+      window.alert('Could not fetch the filed form: ' + err.message);
+    });
+  }
+
   // The claim-initiation "wizard": once a leg is marked Claim started,
   // these two choices are collected right there and saved alongside it —
   // all the non-personal data the claim needs is gathered in one place
@@ -660,14 +846,16 @@
   }
 
   // Claim lifecycle: cart (selected, not yet claimed) -> checked out
-  // (claimed=true — forms being prepared) -> archived (mailed=true —
-  // physically printed, signed, and sent). See COMPENSATION_RULES.md §15.
-  var TRACKING_DEFAULTS = { claimed: false, claimNumber: '', compensationType: '', payoutMethod: '', mailed: false };
+  // (claimed=true) -> printed (printedAt set, filledPdfPath recorded) ->
+  // archived (mailed=true — signed and sent). Claim number is only
+  // meaningful once Skånetrafiken has actually responded, i.e. after
+  // mailing. See COMPENSATION_RULES.md §15/§16.
+  var TRACKING_DEFAULTS = { claimed: false, claimNumber: '', compensationType: '', payoutMethod: '', mailed: false, printedAt: null, filledPdfPath: '' };
   function trackingFor(key) { return tracking[key] || TRACKING_DEFAULTS; }
 
   function loadTracking() {
     if (!TRACKING_URL) { setStatus('Supabase not configured for this build', 'err'); return Promise.resolve(); }
-    return fetch(TRACKING_URL + '?select=trip_id,trip_start_date,claimed,claim_number,compensation_type,payout_method,mailed', { headers: sbHeaders(false) })
+    return fetch(TRACKING_URL + '?select=trip_id,trip_start_date,claimed,claim_number,compensation_type,payout_method,mailed,printed_at,filled_pdf_path', { headers: sbHeaders(false) })
       .then(function (resp) {
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         return resp.json();
@@ -681,6 +869,8 @@
             compensationType: row.compensation_type || '',
             payoutMethod: row.payout_method || '',
             mailed: !!row.mailed,
+            printedAt: row.printed_at || null,
+            filledPdfPath: row.filled_pdf_path || '',
           };
         });
         setStatus('synced with Supabase', 'ok');
@@ -711,8 +901,14 @@
         payout_method: tracking[key].payoutMethod || null,
         mailed: tracking[key].mailed,
         // Only stamp mailed_at on the save that actually flips mailed on —
-        // later saves (e.g. editing a claim number) shouldn't bump it.
+        // later saves (e.g. editing a claim number) shouldn't bump it. Same
+        // reasoning for printed_at/filled_pdf_path: only the print action
+        // itself sends them, so an unrelated later save (mailing, editing
+        // the claim number) doesn't touch — PostgREST's merge-duplicates
+        // leaves columns absent from the payload untouched on conflict.
         mailed_at: patch.mailed ? new Date().toISOString() : undefined,
+        printed_at: patch.printedAt || undefined,
+        filled_pdf_path: patch.filledPdfPath || undefined,
       }]),
     }).then(function (resp) {
       if (!resp.ok) return resp.text().then(function (t) { throw new Error('HTTP ' + resp.status + ': ' + t); });
@@ -853,14 +1049,29 @@
           claimChoiceSelectHtml(key, 'compensationType', t.compensationType, COMPENSATION_TYPE_OPTIONS, 'Compensation…') +
           claimChoiceSelectHtml(key, 'payoutMethod', t.payoutMethod, PAYOUT_METHOD_OPTIONS, 'Payout…');
       }
-      var mailBtnHtml = (opts.mailButton && t.claimed && !t.mailed)
-        ? '<button type="button" class="link-btn mail-btn" data-key="' + esc(key) + '">Mark printed &amp; mailed</button>'
+      // Three real, separate steps (per the user's 2026-07-07 request): a
+      // form gets printed & signed long before it's mailed, and a claim
+      // number only exists once Skånetrafiken has actually responded —
+      // conflating all three into one "claimed" checkbox hid that order.
+      var printBtnHtml = (opts.mailButton && t.claimed && t.compensationType && t.payoutMethod && !t.printedAt)
+        ? '<button type="button" class="link-btn print-btn" data-key="' + esc(key) + '">Print Claim</button>'
+        : '';
+      var printedHintHtml = (opts.mailButton && t.printedAt && !t.mailed)
+        ? '<span class="hint">Printed ' + esc(new Date(t.printedAt).toLocaleString('sv-SE')) + '</span>'
+        : '';
+      var mailBtnHtml = (opts.mailButton && t.claimed && t.printedAt && !t.mailed)
+        ? '<button type="button" class="link-btn mail-btn" data-key="' + esc(key) + '">Mark sent in</button>'
+        : '';
+      var claimNumberHtml = t.mailed
+        ? '<input type="text" class="claim-number-input" data-key="' + esc(key) + '" placeholder="Skånetrafiken claim #" value="' + esc(t.claimNumber) + '">'
         : '';
       trackHtml = '<span class="claim-track">' +
         '<label class="claimed-label"><input type="checkbox" class="claimed-check" data-key="' + esc(key) + '"' + (t.claimed ? ' checked' : '') + '> Claim started</label>' +
-        '<input type="text" class="claim-number-input" data-key="' + esc(key) + '" placeholder="Skånetrafiken claim #" value="' + esc(t.claimNumber) + '">' +
         choicesHtml +
+        printBtnHtml +
+        printedHintHtml +
         mailBtnHtml +
+        claimNumberHtml +
         '</span>';
     }
     var isOpen = expandedLegs.has(key);
@@ -1096,12 +1307,16 @@
       var t = trackingFor(rowKey(r));
       var compLabel = (COMPENSATION_TYPE_OPTIONS.filter(function (o) { return o[0] === t.compensationType; })[0] || [null, '–'])[1];
       var payoutLabel = (PAYOUT_METHOD_OPTIONS.filter(function (o) { return o[0] === t.payoutMethod; })[0] || [null, '–'])[1];
+      var downloadHtml = t.filledPdfPath
+        ? '<button type="button" class="link-btn download-btn" data-path="' + esc(t.filledPdfPath) + '">Download filled form</button>'
+        : '';
       return '<div class="filed-row">' +
         '<span class="line-badge">' + esc(r.line) + '</span>' +
         '<span class="num">' + fmtDate(r.date) + '</span>' +
         '<span>' + esc(r.originName || '?') + '<span class="dest-arrow">→</span>' + esc(r.dest || '?') + '</span>' +
         '<span>' + esc(compLabel) + ' · ' + esc(payoutLabel) + '</span>' +
         '<span class="claim-num">' + (t.claimNumber ? 'Claim #' + esc(t.claimNumber) : 'no claim # recorded yet') + '</span>' +
+        downloadHtml +
         '</div>';
     }).join('');
   }
@@ -1157,17 +1372,25 @@
       renderAll();
       return;
     }
+    var printBtn = e.target.closest('.print-btn');
+    if (printBtn) { handlePrintClaim(printBtn.dataset.key); return; }
+    var downloadBtn = e.target.closest('.download-btn');
+    if (downloadBtn) { handleDownloadFilled(downloadBtn.dataset.path); return; }
     var mailBtn = e.target.closest('.mail-btn');
     if (mailBtn) {
       var mkey = mailBtn.dataset.key;
       // A real, deliberate gate — this is the one action that moves a
       // claim into the archive and stops it being editable, so it asks
       // the literal question the user wanted asked before doing that.
-      if (!window.confirm('All forms printed and on the go?')) return;
+      if (!window.confirm('Signed and in the mail?')) return;
       saveTrackingRow(rowsByKey[mkey], { mailed: true });
       renderCheckedOut();
       renderAlreadyFiled();
     }
+  });
+
+  document.getElementById('editDetailsBtn').addEventListener('click', function () {
+    promptMyDetails(getMyDetails());
   });
 
   document.getElementById('checkoutBtn').addEventListener('click', function () {
