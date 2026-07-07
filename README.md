@@ -23,7 +23,20 @@ groups eligible trips per day into chains where one trip's destination is
 the next trip's origin (same place, in order), and flags any gap between
 chains with the question an investigator would ask ("how did you get from
 X to Y?"). Illustrative and network-wide like the other pages, not
-personalized — you still pick which trips were actually yours.
+personalized — you still pick which trips were actually yours. Also
+drives the actual filing: a picked trip moves through cart → checked out →
+**printed** (fills Skånetrafiken's real paper form client-side — route,
+date, times, delay length, compensation/payout choice — using coordinates
+measured off the template's own layout, then opens the OS print dialog) →
+archived once mailed. Personnummer, bank details, and the signature are
+never collected or filled, regardless of instruction — see
+[docs/COMPENSATION_RULES.md](docs/COMPENSATION_RULES.md) §14/§17.
+
+**System status:** https://thorstengru.github.io/SkanetrafikenForseningar/status.html
+— live health of every moving part (Supabase reachability + table sizes,
+every GitHub Actions workflow's last run, page reachability, static-index
+freshness), rebuilt independently every 15 minutes and designed to still
+say something useful when the database itself is down.
 
 ## Documentation
 
@@ -62,7 +75,12 @@ Pages.
    chance of a short trip starting and finishing entirely between two polls
    (see "Known limitations" below) — well within the realtime quota
    (30,000 requests/30 days; 2 requests every 15 min ≈ 5,760/30 days, ~19%
-   of budget).
+   of budget). Only delays **≥5 minutes** are actually stored (plus each
+   trip's origin/final stop and any irregular — e.g. skipped — stop,
+   always, regardless of delay) — GTFS-RT reports jitter down to the
+   second, which was 94% of this table's rows/bytes for zero compensation
+   value (only ≥20-min delays are ever eligible). See
+   `config.MIN_DELAY_TO_RECORD_SEC`.
 3. **Coverage check** — once a day, compares which trips actually showed up
    in the realtime feed against the timetable. ⚠️ Known limitation: only
    ~5% of scheduled trips ever appear in Skånetrafiken's realtime feed at
@@ -106,10 +124,13 @@ individual delay) lives in a separate, non-public Postgres database.
 | `src/housekeeping.py` | Deletes data older than 45 days. Runs automatically daily. |
 | `src/build_dashboard.py` | Builds the standalone HTML dashboard. Runs automatically on every scan. |
 | `src/build_compensation.py` | Builds the compensation-estimate page (`compensation.html`). Runs automatically on every scan. |
-| `src/build_claims.py` | Builds the reasonable-claim-chains page (`claims.html`). Runs automatically on every scan. |
+| `src/build_claims.py` | Builds the reasonable-claim-chains + claim-filing page (`claims.html`). Runs automatically on every scan. |
+| `src/build_status.py` | Builds the system-status page (`status.html`). Runs automatically every 15 min on its own schedule, independent of the scanner. |
 | `src/static_index.py` | Can be run standalone to force a static-index refresh. |
 | `src/backfill_koda.py` | One-off backfill of past days from Trafiklab's KoDa historical archive. Manually triggered (`backfill.yml`), see [docs/RUNBOOK.md](docs/RUNBOOK.md#backfill-historical-data-koda). |
 | `src/apply_migration.py` | Applies a `src/migrations/*.sql` file against Postgres. Manually triggered (`migrate.yml`), see [docs/RUNBOOK.md](docs/RUNBOOK.md#applying-migrations). |
+| `src/db_usage_report.py` | Read-only diagnostic: total DB size, per-table breakdown, delay-magnitude histogram. Manually triggered (`db_usage_report.yml`). |
+| `src/cleanup_delay_noise.py` | One-off: deletes sub-5-minute delay noise (from before `MIN_DELAY_TO_RECORD_SEC` existed) and `VACUUM FULL`s `delays`. Manually triggered (`cleanup_delay_noise.yml`) — not meant for routine use. |
 
 ## Known limitations / future ideas
 
@@ -131,3 +152,10 @@ individual delay) lives in a separate, non-public Postgres database.
   could be tightened further if it turns out to still miss things.
 - Only ~5% of scheduled trips ever appear in the realtime feed at all — see
   the coverage-check caveat above.
+- Supabase's **Free Plan caps database size at 0.5 GB**. A multi-day
+  backfill at pre-`MIN_DELAY_TO_RECORD_SEC` density once pushed this to
+  1 GB+ and triggered write failures across the board (see
+  [docs/RUNBOOK.md](docs/RUNBOOK.md) for the incident and fix). At the
+  current ~5-min storage floor this isn't a near-term concern, but a
+  future change that widens what gets recorded should re-run
+  `db_usage_report.yml` first, not assume there's headroom.

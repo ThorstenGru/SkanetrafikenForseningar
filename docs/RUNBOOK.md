@@ -179,11 +179,22 @@ sqlite> SELECT COUNT(*) FROM trip_meta;
 | `ON CONFLICT DO UPDATE command cannot affect row a second time` | A batch contains two rows with the same primary key (e.g. malformed feed entities with an empty `trip_id`) | Already guarded in `scan.py` (skips empty `trip_id`, dedupes defensively before each batch) — if it recurs, inspect the feed for a new edge case |
 | Workflow commits nothing most runs even though scans succeeded | Normal — `data/static_index.sqlite` only changes ~weekly; delay data lives in Postgres, not git | No action needed |
 | `missing_trips` shows a huge number for a day the scanner wasn't running yet | The coverage check has a guard against checking dates before the scanner's first run, but only from the point that guard was added | Truncate `missing_trips` for that date range if it predates the guard |
+| Writes fail with `psycopg2.errors.DiskFull` / `No space left on device`, or reads intermittently fail with `QueryCanceled: canceling statement due to statement timeout` or `server didn't return client encoding` | Supabase Free Plan's 0.5 GB database-size quota exceeded (2026-07-07 incident: a multi-day backfill at pre-`MIN_DELAY_TO_RECORD_SEC` density pushed the DB to 947 MB/202% of quota — a project restart fixes the "unhealthy" symptom but never the underlying quota, since restarts don't free space) | Run `db_usage_report.yml` first to see what's actually using space. If it's `delays` noise, run `cleanup_delay_noise.yml` (deletes sub-`MIN_DELAY_TO_RECORD_SEC` rows, then `VACUUM FULL`s the table — a plain `DELETE` alone doesn't shrink the file). Check status.html — a plain `SELECT 1` succeeds even when the DB can't accept writes at all, so read-only reachability isn't a reliable health signal on its own. |
+| No scheduled (`schedule:`) workflow run for hours despite the workflow being active and nothing queued | Either two workflows sharing one `concurrency:` group (a long backfill run silently starves every scan cron behind it — fixed 2026-07-07 by splitting scan/backfill into separate groups), or GitHub's own scheduler delaying triggers under load (no fix available, platform behavior) | `gh run list --workflow=<name>.yml` to check for a gap; if it's a concurrency conflict, verify the group names in the relevant workflow YAMLs actually differ |
 
 ## Check run history
+
+Fastest first check: https://thorstengru.github.io/SkanetrafikenForseningar/status.html
+— last-run status of every workflow, Supabase reachability + table sizes,
+and page reachability, all on one page, rebuilt every 15 minutes
+independent of the scanner.
 
 ```bash
 gh run list --workflow=scan.yml -R ThorstenGru/SkanetrafikenForseningar --limit 10
 gh run list --workflow=housekeeping.yml -R ThorstenGru/SkanetrafikenForseningar --limit 10
+gh run list --workflow=status.yml -R ThorstenGru/SkanetrafikenForseningar --limit 10
 gh run view <run-id> --log -R ThorstenGru/SkanetrafikenForseningar
 ```
+
+Direct database size/table breakdown without opening the Supabase
+dashboard: `gh workflow run db_usage_report.yml`.

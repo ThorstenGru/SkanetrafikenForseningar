@@ -7,6 +7,16 @@
 One row per unique `(trip_id, trip_start_date, stop_sequence)`. Updated (not
 duplicated) on every new poll of the same key.
 
+**Not every stop of every trip is recorded.** A stop only gets a row if its
+delay is `>= config.MIN_DELAY_TO_RECORD_SEC` (300s/5 min), or it's the
+trip's origin or final stop (always, any delay — including exactly zero,
+so a trip that ran on time still gets a confirmed departure/arrival), or
+its `stop_schedule_relationship` is irregular (e.g. `SKIPPED`). Raised
+from "any nonzero delay" 2026-07-07 after GTFS-RT's second-level jitter
+turned out to be 94% of this table's rows/bytes for zero compensation
+value — see [RUNBOOK.md](RUNBOOK.md)'s troubleshooting table for the
+incident that prompted it.
+
 | Column | Type | Description |
 |---|---|---|
 | `trip_id` | TEXT | Trafiklab's internal trip ID (stable per scheduled trip pattern). |
@@ -23,6 +33,7 @@ duplicated) on every new poll of the same key.
 | `stop_name` | TEXT | Human-readable stop name. |
 | `stop_sequence` | INTEGER | The stop's ordinal position in the trip. **Part of the primary key**, not `stop_id` — a circular/loop route can revisit the same physical stop twice in one trip. |
 | `is_final_stop` | BOOLEAN | True if this is the trip's last stop — most relevant for compensation claims. |
+| `is_origin_stop` | BOOLEAN | True if this is the trip's first stop (identified by position — the first entry in GTFS-RT's `stop_time_update` list — not `stop_id`, since a loop route can revisit its origin's `stop_id` later in the trip). Added 2026-07-07 so a noise-cleanup pass can protect origin confirmations the same way `is_final_stop` already protects the final stop. |
 | `stop_schedule_relationship` | TEXT | `SCHEDULED` / `SKIPPED` / `NO_DATA` / `UNSCHEDULED` for this specific stop. |
 | `trip_schedule_relationship` | TEXT | `SCHEDULED` / `ADDED` / `CANCELED` / etc for the whole trip. |
 | `arrival_delay_sec` / `departure_delay_sec` | INTEGER | Delay in seconds (negative = early). |
