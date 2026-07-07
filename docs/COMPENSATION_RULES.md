@@ -637,3 +637,34 @@ cart → checked out (`claimed=true`) → **printed** (`printed_at` set,
 already chosen) → archived (`mailed=true`, now requires `printed_at`
 first). The claim-number input is only rendered once `mailed=true` —
 before that it's premature, since Skånetrafiken hasn't responded yet.
+
+**Asked again, directly, 2026-07-07: could personnummer or the
+signature be typed into a page field instead of handwritten, even if
+never saved to Supabase?** No, and this is deliberate regardless of
+where the data would end up. Both stay off every field this app
+controls — not because of *where* they'd be stored, but because
+auto-filling a government ID number, or capturing a signature image,
+is the same category of action as handling a password or payment
+credential on someone's behalf: declined even with explicit
+authorization, even framed as transient/local-only. Practically:
+Personnummer and Underskrift are the two things `claims_template.html`
+now calls out explicitly in the "Checked out" section's own hint text,
+right where printing happens, as a standing reminder they need a pen.
+
+**Origin and final stop are now always recorded, 2026-07-07 — even at
+zero delay.** `scan.py` used to skip any stop with no delay and no
+irregular `schedule_relationship`, which meant a trip that departed or
+arrived exactly on time (or was first observed mid-route) never got a
+confirmed origin/destination time at all — shown as "?" in
+claims.html, and the exact cause of the "unconfirmed" chain-breaking
+behavior documented in §10/§11. `trip_meta.origin_stop_id` (already
+computed by `static_index.py`, just not previously loaded into
+`scan.py`) and `final_stop_sequence` are now checked before the
+skip, so both endpoints are kept regardless of delay. Everything
+in between the two endpoints is still delay-only — recording every
+intermediate stop of every scanned trip would multiply live write
+volume by roughly the average stops-per-trip count for no benefit to
+compensation eligibility (which only ever looks at the final stop),
+so that trade-off was deliberately not taken. claims.html's per-stop
+drill-down also now flags the final stop's own delay value directly
+(🏁), not just where the delay began (⚡).

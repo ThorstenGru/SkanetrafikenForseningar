@@ -26,9 +26,9 @@ def load_trip_meta(static_conn):
         route_types[rid] = rt
     stops = dict(static_conn.execute("SELECT stop_id, stop_name FROM stops").fetchall())
     trip_meta = {}
-    for (trip_id, route_id, direction_id, trip_number, dest_stop_id, dest_stop_name,
+    for (trip_id, route_id, direction_id, trip_number, origin_stop_id, dest_stop_id, dest_stop_name,
          final_seq, distance_km, sommarticket_valid) in static_conn.execute(
-        """SELECT trip_id, route_id, direction_id, trip_number, destination_stop_id,
+        """SELECT trip_id, route_id, direction_id, trip_number, origin_stop_id, destination_stop_id,
                   destination_stop_name, final_stop_sequence, distance_km, sommarticket_valid
            FROM trip_meta"""
     ):
@@ -38,6 +38,7 @@ def load_trip_meta(static_conn):
             "vehicle_type": config.route_type_label(route_types.get(route_id)),
             "trip_number": trip_number or None,
             "direction_id": direction_id,
+            "origin_stop_id": origin_stop_id,
             "destination_stop_name": dest_stop_name,
             "final_stop_sequence": final_seq,
             "distance_km": distance_km,
@@ -100,6 +101,7 @@ def process_trip_updates(feed, trip_meta, stops, cur, now):
         destination_stop_name = meta.get("destination_stop_name", "")
         direction_id = meta.get("direction_id")
         final_seq = meta.get("final_stop_sequence")
+        origin_stop_id = meta.get("origin_stop_id")
 
         # Every trip we see at all, regardless of delay — the presence log
         # that coverage_check.py diffs against the static schedule.
@@ -123,7 +125,16 @@ def process_trip_updates(feed, trip_meta, stops, cur, now):
 
             is_delay = (arrival_delay not in (None, 0)) or (departure_delay not in (None, 0))
             is_irregular = stu.schedule_relationship != 0  # not plain SCHEDULED (e.g. SKIPPED)
-            if not is_delay and not is_irregular:
+            # Origin and final stop are always kept even with zero delay --
+            # otherwise a trip that ran exactly on time (or was only
+            # observed once it was already past its first few stops) never
+            # gets a confirmed departure/arrival at all, showing "?" in
+            # claims.html and breaking chain-building (see
+            # docs/COMPENSATION_RULES.md's note on unconfirmed endpoints).
+            # Everything in between stays delay-only, to avoid multiplying
+            # every scan's write volume by full per-trip stop counts.
+            is_endpoint = (stu.stop_id == origin_stop_id) or (final_seq is not None and stu.stop_sequence == final_seq)
+            if not is_delay and not is_irregular and not is_endpoint:
                 continue
 
             scheduled_arrival = (arrival_time - arrival_delay) if (arrival_time is not None and arrival_delay is not None) else None

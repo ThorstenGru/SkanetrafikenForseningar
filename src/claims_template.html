@@ -500,7 +500,7 @@
   <section id="checkedOutSection" style="display:none;">
     <div class="section-head">
       <h2>Checked out — preparing your forms</h2>
-      <span class="hint">Pick compensation type + payout for each, then Print Claim to fill and print the official form. Once it's signed and in the mail, confirm below — the claim number goes in once Skånetrafiken responds.</span>
+      <span class="hint">Pick compensation type + payout for each, then Print Claim to fill and print the official form. Once it's signed and in the mail, confirm below — the claim number goes in once Skånetrafiken responds. <strong>Two things are never filled in and always need your pen: Personnummer, and the signature.</strong></span>
     </div>
     <div class="stats" id="checkedOutStats"></div>
     <div id="checkedOutList"></div>
@@ -1024,6 +1024,7 @@
         '<td>' + esc(s.name || '–') +
           (s.final ? ' <span class="hint">(final stop)</span>' : '') +
           (isStart ? ' <span class="delay-flag">⚡ delay begins here</span>' : '') +
+          (s.final ? ' <span class="delay-flag">🏁 final delay: ' + (s.delayMin === null || s.delayMin === undefined ? 'not confirmed' : ((s.delayMin > 0 ? '+' : '') + s.delayMin.toFixed(1) + ' min')) + '</span>' : '') +
         '</td>' +
         '<td class="num">' + esc(s.schedTime || '–') + '</td>' +
         '<td class="num">' + esc(s.actTime || '–') + '</td>' +
