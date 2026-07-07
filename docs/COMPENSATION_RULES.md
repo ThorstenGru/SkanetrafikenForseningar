@@ -575,15 +575,24 @@ because the user asked for it explicitly and confirmed the security
 trade-off below.
 
 **How the personal-details boundary is actually kept:** first name,
-last name, street, postal code, city, and (optionally) the ticket ID
-live **only in the browser's own `localStorage`** (key
+last name, street, postal code, city, mobile, e-post, and (optionally)
+the ticket ID live **only in the browser's own `localStorage`** (key
 `skaneClaimMyDetails`), entered once via "Edit my printing details" and
 reused from then on. They are never sent to `claim_tracking`, and never
 appear in the built static page's own JSON payload (`__DATA_JSON__` is
 fully public with no gate at all — embedding them there would be worse
-than not gating them). Personnummer, mobile, e-post, bank/IBAN/BIC, and
-the signature are never collected or filled — same hard line as §14,
-unchanged.
+than not gating them).
+
+Mobile and e-post were added to this list 2026-07-07, after initially
+being grouped with personnummer under "never collected" — the user
+pointed out they're needed for Skånetrafiken to actually deliver a
+värdekod by SMS/e-post, and they're ordinary contact info, not a
+government ID or bank credential. **Personnummer and bank/IBAN/BIC
+remain a hard line Claude holds regardless of instruction** — never
+collected, never filled, never stored anywhere, even when the user
+pastes one directly into chat — same category as not handling
+passwords or payment credentials on someone's behalf. The signature
+also always stays hand-written.
 
 **The form itself is filled, not retyped.** The blank official PDF
 (`blankett_forseningsersattning_tap.pdf`, checked into the repo as

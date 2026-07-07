@@ -642,14 +642,19 @@
 
   // ---- Print Claim: fill the official PDF client-side, store it, print it ----
   //
-  // Name, address, and ticket ID live ONLY in this browser's localStorage —
-  // never sent to claim_tracking, never part of this built page's own JSON
-  // payload (which is fully public with no gate at all). The filled PDF
-  // that necessarily contains those values is the one thing deliberately
-  // uploaded, to the passphrase-gated claim_forms bucket — see
-  // docs/COMPENSATION_RULES.md §16. Personnummer, mobile, e-post, bank
-  // details, and the signature are never collected or filled — those stay
-  // hand-written on the printed page.
+  // Name, address, mobile, e-post, and ticket ID live ONLY in this browser's
+  // localStorage — never sent to claim_tracking, never part of this built
+  // page's own JSON payload (which is fully public with no gate at all).
+  // The filled PDF that necessarily contains those values is the one thing
+  // deliberately uploaded, to the passphrase-gated claim_forms bucket — see
+  // docs/COMPENSATION_RULES.md §17. Mobile/e-post are here (unlike the
+  // §14/§17 "never" list) because they're needed for Skånetrafiken to
+  // actually deliver a värdekod by SMS/e-post — ordinary contact info, not
+  // a government ID or bank credential. Personnummer and bank/IBAN/BIC stay
+  // a hard line Claude holds regardless of instruction — never collected,
+  // never filled, never stored anywhere — same as not handling passwords or
+  // payment credentials on someone's behalf. The signature also always
+  // stays hand-written.
   var MY_DETAILS_KEY = 'skaneClaimMyDetails';
   function getMyDetails() {
     try { return JSON.parse(localStorage.getItem(MY_DETAILS_KEY)) || null; }
@@ -667,9 +672,13 @@
     if (postal === null) return null;
     var city = window.prompt('Ort (city):', existing.city || '');
     if (city === null) return null;
+    var mobile = window.prompt('Mobilnummer (for SMS värdekod, optional):', existing.mobile || '');
+    if (mobile === null) mobile = existing.mobile || '';
+    var email = window.prompt('E-post (for e-post värdekod, optional):', existing.email || '');
+    if (email === null) email = existing.email || '';
     var ticketId = window.prompt('BiljettID (optional, leave blank to skip):', existing.ticketId || '');
     if (ticketId === null) ticketId = existing.ticketId || '';
-    var details = { firstName: firstName, lastName: lastName, street: street, postal: postal, city: city, ticketId: ticketId };
+    var details = { firstName: firstName, lastName: lastName, street: street, postal: postal, city: city, mobile: mobile, email: email, ticketId: ticketId };
     localStorage.setItem(MY_DETAILS_KEY, JSON.stringify(details));
     return details;
   }
@@ -689,6 +698,7 @@
   var FIELD_XY = {
     firstName: [212, py(78)], lastName: [391, py(78)],
     street: [33, py(100)], postal: [212, py(100)], city: [301, py(100)],
+    mobile: [33, py(121.9)], email: [212, py(121.9)],
     ticketId: [33, py(166.5)],
     busLine: [500, py(166.9)],
     originName: [306, py(189.5)], originTime: [500, py(189.5)],
@@ -701,6 +711,10 @@
   };
   var COMP_DOTS = { prisavdrag: [237.8, py(322.9)], taxi: [237.8, py(341.2)], mileage: [237.8, py(415.3)] };
   var PAYOUT_DOTS = { voucher_sms: [38.2, py(380.5)], voucher_email: [38.2, py(392.7)], cash: [38.2, py(405.0)] };
+  // The two attestation checkboxes at the bottom ("uppgifterna är
+  // sanningsenliga" / "jag har läst villkoren") -- always marked, since a
+  // claim isn't submittable without both regardless of trip specifics.
+  var ATTESTATION_DOTS = [[31.85, py(526.55)], [234.25, py(526.55)]];
 
   function delayBucketKey(min) {
     if (min === null || min === undefined) return null;
@@ -735,6 +749,8 @@
         text(FIELD_XY.street, details.street);
         text(FIELD_XY.postal, details.postal);
         text(FIELD_XY.city, details.city);
+        text(FIELD_XY.mobile, details.mobile, 9);
+        text(FIELD_XY.email, details.email, 9);
         text(FIELD_XY.ticketId, details.ticketId, 9);
 
         var dateStr = isoDate(r.date);
@@ -752,6 +768,7 @@
         dot(DELAY_DOTS[delayBucketKey(r.delayUsedMin)]);
         dot(COMP_DOTS[t.compensationType]);
         dot(PAYOUT_DOTS[t.payoutMethod]);
+        ATTESTATION_DOTS.forEach(dot);
 
         return pdfDoc.save();
       });
