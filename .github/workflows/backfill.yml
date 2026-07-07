@@ -4,11 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       days:
-        description: "How many days back to backfill (ending yesterday)"
+        description: "How many days back to backfill (ending yesterday). Ignored if start is set."
         default: "32"
       interval_hours:
-        description: "Sampling cadence in hours, matching the live scan cadence"
+        description: "Sampling cadence in hours, matching the live scan cadence. Accepts fractions (e.g. 0.25 for 15 min)."
         default: "2"
+      start:
+        description: "YYYY-MM-DD — overrides days, backfills an explicit range instead of 'N days ending yesterday'"
+        default: ""
+      end:
+        description: "YYYY-MM-DD — only used together with start; defaults to yesterday if start is set but end isn't"
+        default: ""
 
 permissions:
   contents: write
@@ -38,7 +44,18 @@ jobs:
           TRAFIKLAB_STATIC_KEY: ${{ secrets.TRAFIKLAB_STATIC_KEY }}
           KODA_API_KEY: ${{ secrets.KODA_API_KEY }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python src/backfill_koda.py --days "${{ github.event.inputs.days }}" --interval-hours "${{ github.event.inputs.interval_hours }}"
+          START: ${{ github.event.inputs.start }}
+          END: ${{ github.event.inputs.end }}
+          DAYS: ${{ github.event.inputs.days }}
+          INTERVAL_HOURS: ${{ github.event.inputs.interval_hours }}
+        run: |
+          if [ -n "$START" ]; then
+            ARGS="--start $START --interval-hours $INTERVAL_HOURS"
+            if [ -n "$END" ]; then ARGS="$ARGS --end $END"; fi
+          else
+            ARGS="--days $DAYS --interval-hours $INTERVAL_HOURS"
+          fi
+          python src/backfill_koda.py $ARGS
 
       - name: Commit static index (routes/stops cache, changes ~weekly)
         run: |
