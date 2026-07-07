@@ -1,0 +1,45 @@
+name: Build content pages
+description: >
+  Builds dashboard, compensation, and claims into pages_site/, then
+  preserves the independently-built status page. Shared by scan.yml,
+  backfill.yml, and deploy-pages.yml -- previously each repeated the same
+  four steps verbatim.
+
+inputs:
+  database-url:
+    required: true
+  sommarbiljett-purchased-at:
+    required: true
+  supabase-anon-key:
+    required: true
+  claim-tracking-passphrase:
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Build dashboard
+      shell: bash
+      env:
+        DATABASE_URL: ${{ inputs.database-url }}
+      run: python src/build_dashboard.py --out pages_site/index.html
+
+    - name: Build compensation estimate page
+      shell: bash
+      env:
+        DATABASE_URL: ${{ inputs.database-url }}
+        SOMMARBILJETT_PURCHASED_AT: ${{ inputs.sommarbiljett-purchased-at }}
+      run: python src/build_compensation.py --out pages_site/compensation.html
+
+    - name: Build reasonable claim chains page
+      shell: bash
+      env:
+        DATABASE_URL: ${{ inputs.database-url }}
+        SUPABASE_ANON_KEY: ${{ inputs.supabase-anon-key }}
+        CLAIM_TRACKING_PASSPHRASE: ${{ inputs.claim-tracking-passphrase }}
+        SOMMARBILJETT_PURCHASED_AT: ${{ inputs.sommarbiljett-purchased-at }}
+      run: python src/build_claims.py --out pages_site/claims.html
+
+    - name: Preserve status page (built independently by status.yml)
+      shell: bash
+      run: curl -sfL https://thorstengru.github.io/SkanetrafikenForseningar/status.html -o pages_site/status.html || echo "status.html not live yet, skipping"

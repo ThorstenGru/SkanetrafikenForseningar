@@ -48,27 +48,13 @@ jobs:
           git pull --rebase origin master
           git push
 
-      - name: Build dashboard
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python src/build_dashboard.py --out pages_site/index.html
-
-      - name: Build compensation estimate page
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          SOMMARBILJETT_PURCHASED_AT: ${{ secrets.SOMMARBILJETT_PURCHASED_AT }}
-        run: python src/build_compensation.py --out pages_site/compensation.html
-
-      - name: Build reasonable claim chains page
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-          CLAIM_TRACKING_PASSPHRASE: ${{ secrets.CLAIM_TRACKING_PASSPHRASE }}
-          SOMMARBILJETT_PURCHASED_AT: ${{ secrets.SOMMARBILJETT_PURCHASED_AT }}
-        run: python src/build_claims.py --out pages_site/claims.html
-
-      - name: Preserve status page (built independently by status.yml)
-        run: curl -sfL https://thorstengru.github.io/SkanetrafikenForseningar/status.html -o pages_site/status.html || echo "status.html not live yet, skipping"
+      - name: Build content pages
+        uses: ./.github/actions/build-content-pages
+        with:
+          database-url: ${{ secrets.DATABASE_URL }}
+          sommarbiljett-purchased-at: ${{ secrets.SOMMARBILJETT_PURCHASED_AT }}
+          supabase-anon-key: ${{ secrets.SUPABASE_ANON_KEY }}
+          claim-tracking-passphrase: ${{ secrets.CLAIM_TRACKING_PASSPHRASE }}
 
       - uses: actions/upload-pages-artifact@v3
         with:
