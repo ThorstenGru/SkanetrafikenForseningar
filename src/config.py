@@ -162,6 +162,15 @@ def route_type_label(route_type):
 # real claim calculation.
 MIN_DELAY_FOR_COMPENSATION_MIN = 20  # below this, no compensation applies at all
 
+# Below this, a stop-level delay isn't even written to `delays` at all (a
+# 2026-07-07 fix -- GTFS-RT reports delay down to the second for completely
+# routine timing jitter, which was 94% of the table's rows and bytes for
+# zero compensation-relevant value: only ~1.8 MB of ~896 MB actually fell in
+# the >=20-min eligible range). Origin/final stops and irregular
+# (SKIPPED/etc.) stops are still always recorded regardless of this floor --
+# see scan.py's is_endpoint/is_irregular handling.
+MIN_DELAY_TO_RECORD_SEC = 300  # 5 minutes
+
 SOMMARBILJETT_PRICE_SEK = 595
 SOMMARBILJETT_DIVISOR = 40  # "single trips" the ticket price is divided by for price-deduction purposes
 SOMMARBILJETT_SINGLE_TRIP_PRICE_SEK = SOMMARBILJETT_PRICE_SEK / SOMMARBILJETT_DIVISOR  # 14.875 kr

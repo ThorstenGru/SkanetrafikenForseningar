@@ -1,0 +1,25 @@
+name: Cleanup delay noise (one-off)
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Delete sub-5-minute noise and VACUUM FULL delays
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python src/cleanup_delay_noise.py

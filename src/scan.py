@@ -123,7 +123,13 @@ def process_trip_updates(feed, trip_meta, stops, cur, now):
             departure_time = stu.departure.time if stu.HasField("departure") and stu.departure.HasField("time") else None
             stop_sched_rel = config.SCHEDULE_RELATIONSHIP_LABELS.get(stu.schedule_relationship, str(stu.schedule_relationship))
 
-            is_delay = (arrival_delay not in (None, 0)) or (departure_delay not in (None, 0))
+            # 2026-07-07: raised from "any nonzero delay" to a 5-minute floor
+            # -- GTFS-RT reports jitter down to the second, which was 94% of
+            # this table's rows/bytes for essentially zero compensation
+            # value (only trips >=20 min at the final stop are ever
+            # eligible; see config.MIN_DELAY_TO_RECORD_SEC's own note).
+            delay_magnitude = max(abs(arrival_delay or 0), abs(departure_delay or 0))
+            is_delay = delay_magnitude >= config.MIN_DELAY_TO_RECORD_SEC
             is_irregular = stu.schedule_relationship != 0  # not plain SCHEDULED (e.g. SKIPPED)
             # Origin and final stop are always kept even with zero delay --
             # otherwise a trip that ran exactly on time (or was only
