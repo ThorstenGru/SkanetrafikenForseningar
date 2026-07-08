@@ -179,6 +179,7 @@ Rebuilt by `src/static_index.py`, at most once a week.
 | `routes` | `route_id` → `short_name`, `long_name`, `route_type` (raw GTFS code — see `config.ROUTE_TYPE_LABELS` for the bus/rail/tram/ferry mapping). |
 | `stops` | `stop_id` → `stop_name`, `stop_lat`, `stop_lon` (lat/lon added 2026-07-06 for `claims.html`'s "same place" check — see `COMPENSATION_RULES.md` §10). |
 | `trip_meta` | `trip_id` → `route_id`, `direction_id`, `service_id`, `trip_number`, `origin_stop_id`, `destination_stop_id`, `destination_stop_name`, `final_stop_sequence`, `distance_km`, `sommarticket_valid`. |
+| `stop_times` | Added 2026-07-08 — `trip_id`, `stop_sequence` → `stop_id`, `arrival_time`, `departure_time` (raw GTFS `HH:MM:SS`, can exceed `24:00:00` for a post-midnight trip). Every station on every trip's static timetable, not just delayed ones — lets `claims.html` show a complete journey by merging this with the sparse `delays` data. See `COMPENSATION_RULES.md` §19. |
 | `calendar` | `service_id` → weekday flags (`monday`..`sunday`), `start_date`, `end_date`. |
 | `calendar_dates` | `service_id`, `date`, `exception_type` (1=added, 2=removed) — exceptions to the base calendar. |
 

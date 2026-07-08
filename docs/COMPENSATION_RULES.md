@@ -695,3 +695,31 @@ combination, not a contradiction. Same one-way confirmation gate as
 archiving action. The archived section now shows which path was used
 ("Mailed" vs "Filed digitally") so that distinction isn't lost once a
 claim is archived.
+
+## 19. Complete journey display — every station, not just delayed ones
+
+Requested by the user 2026-07-08, showing screenshots of Skånetrafiken's
+own app: the per-stop drill-down in claims.html only ever showed the
+stations `delays` happened to have a row for (see `config.MIN_DELAY_TO_
+RECORD_SEC`), so a trip's drill-down could start mid-route (e.g. "seq 8")
+instead of at the actual origin — nothing like the complete, every-
+station timeline their own app shows.
+
+**Solved without touching Postgres or the storage floor.** The fix that
+caused the 2026-07-07 quota incident (only storing meaningfully-delayed
+stops) stays exactly as it was — this is a presentation-layer merge, not
+a rollback of that fix. `static_index.py` now also stores a `stop_times`
+table (every trip's complete scheduled stop-by-stop timetable) during the
+same weekly GTFS download it already does — no new Trafiklab API calls,
+since `stop_times.txt` is already inside that zip. `build_claims.py`
+merges this complete static schedule with whatever sparse live data
+exists in `delays`, matched by `stop_sequence` (not `stop_id` — see the
+origin-detection fix in §17/scan.py's own note on loop routes revisiting
+a stop_id). A station with no live-recorded row is shown as "on time" —
+not "unknown" — because the absence of a row is itself a reliable signal
+under this policy (anything ≥5 min would have been recorded), not a gap
+in knowledge.
+
+**Not built:** an interactive map of the route (as seen in the
+screenshots). The station list with scheduled + actual times was the
+core ask; the map is a larger, separate addition if wanted later.

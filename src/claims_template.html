@@ -365,6 +365,7 @@
   .stops-panel td { padding: 3px 8px 3px 0; color: var(--ink-dim); border-bottom: none; }
   .stops-panel tr.final-stop td { color: var(--ink); font-weight: 600; }
   .stops-panel tr.delay-start td { background: rgba(209, 69, 58, 0.08); }
+  .stops-panel tr.stop-inferred td { color: var(--ink-faint); font-style: italic; }
   .delay-flag { color: var(--red); font-weight: 600; font-size: 11px; }
   .stop-delay.mild { color: var(--amber-bright); }
   .stop-delay.severe { color: var(--red); font-weight: 600; }
@@ -1026,10 +1027,20 @@
     }
     var rowsHtml = r.stops.map(function (s) {
       var isStart = delayStartSeq !== null && s.seq === delayStartSeq;
-      var delayText = (s.delayMin === null || s.delayMin === undefined)
-        ? '–'
-        : (s.delayMin > 0 ? '+' : '') + s.delayMin.toFixed(1) + ' min';
-      return '<tr class="' + (s.final ? 'final-stop' : '') + (isStart ? ' delay-start' : '') + '">' +
+      // recorded === false means this station never got its own row in
+      // `delays` (see config.MIN_DELAY_TO_RECORD_SEC) -- which itself is a
+      // reliable signal it was under 5 min late, not "unknown". Shown as
+      // "on time" rather than a bare "–" so the journey reads as complete,
+      // same as Skånetrafiken's own app, while staying honest that this
+      // one station's exact actual time isn't tracked precisely.
+      var notRecorded = s.recorded === false;
+      var actualText = notRecorded ? 'on time' : esc(s.actTime || '–');
+      var delayText = notRecorded
+        ? '< 5 min'
+        : (s.delayMin === null || s.delayMin === undefined)
+          ? '–'
+          : (s.delayMin > 0 ? '+' : '') + s.delayMin.toFixed(1) + ' min';
+      return '<tr class="' + (s.final ? 'final-stop' : '') + (isStart ? ' delay-start' : '') + (notRecorded ? ' stop-inferred' : '') + '">' +
         '<td class="num">' + (s.seq === null || s.seq === undefined ? '–' : s.seq) + '</td>' +
         '<td>' + esc(s.name || '–') +
           (s.final ? ' <span class="hint">(final stop)</span>' : '') +
@@ -1037,8 +1048,8 @@
           (s.final ? ' <span class="delay-flag">🏁 final delay: ' + (s.delayMin === null || s.delayMin === undefined ? 'not confirmed' : ((s.delayMin > 0 ? '+' : '') + s.delayMin.toFixed(1) + ' min')) + '</span>' : '') +
         '</td>' +
         '<td class="num">' + esc(s.schedTime || '–') + '</td>' +
-        '<td class="num">' + esc(s.actTime || '–') + '</td>' +
-        '<td class="num stop-delay ' + stopDelayClass(s.delayMin) + '">' + delayText + '</td>' +
+        '<td class="num">' + actualText + '</td>' +
+        '<td class="num stop-delay ' + (notRecorded ? '' : stopDelayClass(s.delayMin)) + '">' + delayText + '</td>' +
         '</tr>';
     }).join('');
     return '<div class="stops-panel"><table><thead><tr>' +

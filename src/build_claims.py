@@ -35,7 +35,7 @@ from datetime import datetime, timedelta
 
 import config
 import db
-from build_dashboard import fetch_detail_rows
+from build_dashboard import fetch_detail_rows, fmt_time
 from build_compensation import compute_compensation
 
 TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "claims_template.html")
@@ -61,6 +61,82 @@ def load_static_lookups():
     return stops, trip_endpoints
 
 
+def load_full_stop_schedule(trip_ids):
+    """trip_id -> ordered [(stop_sequence, stop_id, stop_name, arrival_time,
+    departure_time), ...] for every station on the trip's static timetable
+    -- not just the ones a delay happened to be recorded for. Scoped to the
+    trip_ids actually appearing on this page (dozens, not the whole
+    network) via static_index.sqlite's stop_times table (added
+    2026-07-08)."""
+    if not trip_ids:
+        return {}
+    conn = sqlite3.connect(config.STATIC_INDEX_PATH)
+    try:
+        placeholders = ",".join("?" * len(trip_ids))
+        rows = conn.execute(
+            """SELECT st.trip_id, st.stop_sequence, st.stop_id, s.stop_name, st.arrival_time, st.departure_time
+               FROM stop_times st
+               LEFT JOIN stops s ON s.stop_id = st.stop_id
+               WHERE st.trip_id IN (%s)
+               ORDER BY st.trip_id, st.stop_sequence""" % placeholders,
+            list(trip_ids),
+        )
+        out = {}
+        for trip_id, seq, stop_id, stop_name, arr, dep in rows:
+            out.setdefault(trip_id, []).append((seq, stop_id, stop_name, arr, dep))
+        return out
+    finally:
+        conn.close()
+
+
+def _gtfs_time_to_local_dt(time_str, service_date_str):
+    """GTFS times are HH:MM:SS and can exceed 24:00:00 for a trip that runs
+    past midnight, relative to its service_date (YYYYMMDD). Attaches
+    LOCAL_TZ directly to the resulting wall-clock time rather than doing
+    proper aware-arithmetic across the addition -- a rare DST-transition
+    day could be off by an hour, an accepted approximation for a display
+    feature, not a legal timestamp."""
+    if not time_str:
+        return None
+    try:
+        h, m, s = (int(x) for x in time_str.split(":"))
+    except ValueError:
+        return None
+    base = datetime.strptime(service_date_str, "%Y%m%d")
+    return (base + timedelta(hours=h, minutes=m, seconds=s)).replace(tzinfo=config.LOCAL_TZ)
+
+
+def merge_full_schedule(rows, full_schedule):
+    """Replaces each row's sparse, delay-only `stops` list (only stations
+    where scan.py actually wrote a row -- see config.MIN_DELAY_TO_RECORD_SEC)
+    with the complete scheduled journey: every station from the static
+    timetable, carrying the live-recorded actual time/delay wherever we
+    have one, and the scheduled time standing in for "on time, not
+    specifically recorded" everywhere else. Matched by stop_sequence, which
+    both the static timetable and `delays` key on (not stop_id -- a
+    circular/loop route can revisit the same stop_id twice in one trip)."""
+    for r in rows:
+        schedule = full_schedule.get(r["trip"])
+        if not schedule:
+            continue  # no static schedule found for this trip_id -- leave the sparse live list as-is
+        live_by_seq = {s["seq"]: s for s in (r.get("stops") or [])}
+        merged = []
+        for seq, stop_id, stop_name, arr_str, dep_str in schedule:
+            live = live_by_seq.get(seq)
+            if live:
+                merged.append(live)
+                continue
+            sched_dt = _gtfs_time_to_local_dt(dep_str or arr_str, r["date"])
+            merged.append({
+                "seq": seq, "stopId": stop_id, "name": stop_name, "final": False, "relationship": None,
+                "delayMin": None, "recorded": False,
+                "schedTime": fmt_time(sched_dt), "actTime": None,
+                "schedTimeIso": sched_dt.isoformat() if sched_dt else None, "actTimeIso": None,
+            })
+        r["stops"] = merged
+    return rows
+
+
 def enrich_with_endpoints(rows, stops, trip_endpoints):
     """Attach origin/destination stop identity (name + lat/lon) to each row,
     plus the best-known timestamp for each end, so the browser can test
@@ -80,13 +156,13 @@ def enrich_with_endpoints(rows, stops, trip_endpoints):
         origin_meta = stops.get(origin_id, {})
         dest_meta = stops.get(dest_id, {})
 
-        origin_stop_entry = None
-        dest_stop_entry = None
-        for s in r.get("stops") or []:
-            if origin_id and s.get("stopId") == origin_id:
-                origin_stop_entry = s
-            if s.get("final"):
-                dest_stop_entry = s
+        # Origin is the minimum-stop_sequence entry, not a stopId match --
+        # a circular/loop route can revisit the same physical stop_id later
+        # in the same trip (see scan.py's own note on this), which a naive
+        # stopId match could mistake for the origin.
+        stop_list = r.get("stops") or []
+        origin_stop_entry = min(stop_list, key=lambda s: s["seq"]) if stop_list else None
+        dest_stop_entry = next((s for s in stop_list if s.get("final")), None)
 
         out.append(dict(r))
         out[-1].update({
@@ -122,6 +198,8 @@ def main():
         conn.close()
 
     comp_rows = compute_compensation(rows)
+    full_schedule = load_full_stop_schedule([r["trip"] for r in comp_rows])
+    comp_rows = merge_full_schedule(comp_rows, full_schedule)
     stops, trip_endpoints = load_static_lookups()
     claim_rows = enrich_with_endpoints(comp_rows, stops, trip_endpoints)
 

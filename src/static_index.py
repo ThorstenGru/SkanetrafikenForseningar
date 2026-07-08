@@ -1,8 +1,15 @@
 """Download and cache Trafiklab's static GTFS Regional data, then distill it
 into a small SQLite index (routes, stops, per-trip destination, distance,
-and calendar service-day rules) that we keep committed to the repo. The raw
-GTFS zip (~300 MB uncompressed) is downloaded to a scratch directory and
-deleted again — it is never committed.
+calendar service-day rules, and each trip's full scheduled stop-by-stop
+timetable) that we keep committed to the repo. The raw GTFS zip (~300 MB
+uncompressed) is downloaded to a scratch directory and deleted again — it
+is never committed.
+
+`stop_times` (added 2026-07-08) exists so claims.html can show a trip's
+complete journey -- every station, not just the ones a delay happened to
+be recorded for (see config.MIN_DELAY_TO_RECORD_SEC) -- without any extra
+Trafiklab API calls, since this is data already inside the same weekly
+download.
 
 The calendar/calendar_dates tables exist so coverage_check.py can answer
 "which trip_ids were actually scheduled to run on date X" without needing
@@ -76,11 +83,18 @@ def _download_and_extract_raw():
 def _scan_stop_times(raw_dir):
     """Single streaming pass over stop_times.txt: for each trip_id, find the
     first and last stop (by stop_sequence) and the total distance travelled
-    (from shape_dist_traveled, in meters -> converted to km)."""
+    (from shape_dist_traveled, in meters -> converted to km). Also collects
+    every (trip_id, stop_sequence, stop_id, arrival_time, departure_time)
+    row for the new `stop_times` table -- added 2026-07-08 so claims.html
+    can show a trip's complete scheduled journey (every intermediate
+    station, not just the ones a delay was actually recorded for), without
+    any extra Trafiklab API calls: this data is already inside the same
+    zip download `_download_and_extract_raw` already fetches weekly."""
     stop_times_path = os.path.join(raw_dir, "stop_times.txt")
     first_stop = {}   # trip_id -> (min_seq, stop_id)
     last_stop = {}     # trip_id -> (max_seq, stop_id)
     dist_range = {}    # trip_id -> [min_dist, max_dist] (meters, or None if missing anywhere)
+    all_stop_times = []  # (trip_id, stop_sequence, stop_id, arrival_time, departure_time)
     with open(stop_times_path, "r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
@@ -109,12 +123,14 @@ def _scan_stop_times(raw_dir):
                 entry[0] = min(entry[0], dist)
                 entry[1] = max(entry[1], dist)
 
+            all_stop_times.append((trip_id, seq, row["stop_id"], row.get("arrival_time", ""), row.get("departure_time", "")))
+
     distance_km = {}
     for trip_id, entry in dist_range.items():
         if entry and entry is not False:
             distance_km[trip_id] = round((entry[1] - entry[0]) / 1000, 3)
 
-    return first_stop, last_stop, distance_km
+    return first_stop, last_stop, distance_km, all_stop_times
 
 
 def rebuild_index():
@@ -142,7 +158,7 @@ def rebuild_index():
                 lon = float(row["stop_lon"]) if row.get("stop_lon") not in (None, "") else None
                 stops[row["stop_id"]] = (row.get("stop_name", ""), lat, lon)
 
-        first_stop, last_stop, distance_km = _scan_stop_times(config.RAW_STATIC_CACHE_DIR)
+        first_stop, last_stop, distance_km, all_stop_times = _scan_stop_times(config.RAW_STATIC_CACHE_DIR)
 
         trips_path = os.path.join(config.RAW_STATIC_CACHE_DIR, "trips.txt")
         os.makedirs(config.DATA_DIR, exist_ok=True)
@@ -167,9 +183,16 @@ def rebuild_index():
         )
         conn.execute("CREATE TABLE calendar_dates (service_id TEXT, date TEXT, exception_type INTEGER)")
         conn.execute("CREATE INDEX idx_calendar_dates_svc ON calendar_dates (service_id, date)")
+        conn.execute(
+            "CREATE TABLE stop_times ("
+            "trip_id TEXT, stop_sequence INTEGER, stop_id TEXT, "
+            "arrival_time TEXT, departure_time TEXT)"
+        )
+        conn.execute("CREATE INDEX idx_stop_times_trip ON stop_times (trip_id, stop_sequence)")
 
         conn.executemany("INSERT INTO routes VALUES (?, ?, ?, ?)", [(k, v[0], v[1], v[2]) for k, v in routes.items()])
         conn.executemany("INSERT INTO stops VALUES (?, ?, ?, ?)", [(k, v[0], v[1], v[2]) for k, v in stops.items()])
+        conn.executemany("INSERT INTO stop_times VALUES (?, ?, ?, ?, ?)", all_stop_times)
 
         with open(trips_path, "r", encoding="utf-8-sig", newline="") as f:
             trip_rows = []
@@ -218,8 +241,8 @@ def rebuild_index():
         conn.execute("INSERT INTO meta VALUES (?)", (time.time(),))
         conn.commit()
         conn.close()
-        print("Static index built: %d routes, %d stops, %d trips, %d calendar rows, %d calendar_dates rows." % (
-            len(routes), len(stops), len(trip_rows), len(calendar_rows), len(calendar_dates_rows)))
+        print("Static index built: %d routes, %d stops, %d trips, %d calendar rows, %d calendar_dates rows, %d stop_times rows." % (
+            len(routes), len(stops), len(trip_rows), len(calendar_rows), len(calendar_dates_rows), len(all_stop_times)))
         return True
     finally:
         if os.path.exists(config.RAW_STATIC_CACHE_DIR):
