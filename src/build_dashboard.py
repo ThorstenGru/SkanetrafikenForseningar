@@ -41,26 +41,53 @@ def fmt_time(dt):
 
 
 def build_alert_lookups(cur):
+    """trip_id/route_id/stop_id are STATIC identifiers that recur across every
+    calendar day a trip/route/stop exists -- an alert_entities row carries no
+    date of its own, only a link to whichever alert mentioned it. Without a
+    date check, a single alert from one specific day (e.g. a signal fault on
+    2026-06-26) would get permanently attached to every future/past
+    occurrence of that same recurring trip_id, silently overwriting the
+    correct day's own reason (or lack of one). Found 2026-07-08 while
+    investigating a real claim rejection -- a delay reason shown for one
+    day's trip turned out to belong to a different day entirely. Each alert
+    now carries its own active_period so best_reason() can require the
+    alert to have actually been active on the specific day being displayed."""
     cur.execute(
-        """SELECT e.trip_id, e.route_id, e.stop_id, a.description_text
+        """SELECT e.trip_id, e.route_id, e.stop_id, a.description_text,
+                  a.active_period_start, a.active_period_end
            FROM alert_entities e JOIN alerts a ON a.alert_uid = e.alert_uid"""
     )
     by_trip, by_route, by_stop = {}, {}, {}
-    for trip_id, route_id, stop_id, desc in cur.fetchall():
+    for trip_id, route_id, stop_id, desc, start, end in cur.fetchall():
+        entry = (desc, start, end)
         if trip_id:
-            by_trip.setdefault(trip_id, desc)
+            by_trip.setdefault(trip_id, []).append(entry)
         if route_id:
-            by_route.setdefault(route_id, desc)
+            by_route.setdefault(route_id, []).append(entry)
         if stop_id:
-            by_stop.setdefault(stop_id, desc)
+            by_stop.setdefault(stop_id, []).append(entry)
     return by_trip, by_route, by_stop
 
 
-def best_reason(lookups, trip_id, route_id, stop_id):
+def _alert_active_on(start, end, day_start, day_end):
+    # A GTFS-RT alert with no active_period at all means "always active" --
+    # matches the spec, and matches how ServiceAlerts.pb entries with an
+    # empty active_period list have historically been stored here (both
+    # bounds NULL). A one-sided bound (only start or only end) is treated as
+    # open on the missing side, not as "never matches".
+    if start is not None and start > day_end:
+        return False
+    if end is not None and end < day_start:
+        return False
+    return True
+
+
+def best_reason(lookups, trip_id, route_id, stop_id, day_start, day_end):
     by_trip, by_route, by_stop = lookups
     for d, key in ((by_trip, trip_id), (by_stop, stop_id), (by_route, route_id)):
-        if key in d:
-            return d[key].strip()
+        for desc, start, end in d.get(key, ()):
+            if _alert_active_on(start, end, day_start, day_end):
+                return desc.strip()
     return None
 
 
@@ -219,11 +246,20 @@ def fetch_detail_rows(cur, start_date, end_date, single_date):
         }
 
     out = []
-    for t in trips.values():
-        reason = best_reason(lookups, t["trip"], t["route_id"], None)
+    for (_trip_id_key, trip_date), t in trips.items():
+        # 36h, not 24h: trip_start_date is the GTFS *service* day, but a
+        # late-night trip's own stops (and thus a same-service alert's real
+        # active_period) can fall in the early hours of the CALENDAR day
+        # after -- confirmed a real case of this exact pattern 2026-07-08
+        # while investigating a claim (a trip departing 21:51 arriving
+        # 00:49 next calendar day). Still far tighter than the old
+        # unscoped-across-45-days match.
+        day_start = datetime.combine(trip_date, datetime.min.time(), tzinfo=config.LOCAL_TZ)
+        day_end = day_start + timedelta(hours=36)
+        reason = best_reason(lookups, t["trip"], t["route_id"], None, day_start, day_end)
         if reason is None:
             for sid in t["stop_ids"]:
-                reason = best_reason(lookups, t["trip"], t["route_id"], sid)
+                reason = best_reason(lookups, t["trip"], t["route_id"], sid, day_start, day_end)
                 if reason:
                     break
         out.append({
