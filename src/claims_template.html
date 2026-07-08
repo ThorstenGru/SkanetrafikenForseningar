@@ -20,6 +20,8 @@
     --red-dim: #fdecea;
     --green: #1f9d55;
     --green-dim: #e6f7ec;
+    --blue: #2563a8;
+    --blue-dim: #e8f0fa;
     --display: "Bahnschrift SemiCondensed", "Bahnschrift", "Arial Narrow", "Segoe UI Semibold", sans-serif;
     --body: "Segoe UI", system-ui, -apple-system, sans-serif;
     --mono: ui-monospace, "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
@@ -395,9 +397,9 @@
 
   .filed-row {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 10px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
     background: var(--green-dim);
     border: 1px solid var(--green);
     border-radius: 3px;
@@ -405,7 +407,11 @@
     font-size: 12.5px;
     margin-bottom: 6px;
   }
+  .filed-row.refunded { background: var(--blue-dim); border-color: var(--blue); }
+  .filed-row-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
   .filed-row .claim-num { font-family: var(--mono); color: var(--ink); }
+  .refunded-label { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; color: var(--blue); cursor: pointer; }
+  .filed-row:not(.refunded) .refunded-label { color: var(--ink-dim); font-weight: normal; }
 
   .claim-choice {
     display: flex;
@@ -897,12 +903,12 @@
   // archived (mailed=true — signed and sent). Claim number is only
   // meaningful once Skånetrafiken has actually responded, i.e. after
   // mailing. See COMPENSATION_RULES.md §15/§16.
-  var TRACKING_DEFAULTS = { claimed: false, claimNumber: '', compensationType: '', payoutMethod: '', mailed: false, printedAt: null, filledPdfPath: '', claimedDigitally: false };
+  var TRACKING_DEFAULTS = { claimed: false, claimNumber: '', compensationType: '', payoutMethod: '', mailed: false, printedAt: null, filledPdfPath: '', claimedDigitally: false, refunded: false, refundedAt: null };
   function trackingFor(key) { return tracking[key] || TRACKING_DEFAULTS; }
 
   function loadTracking() {
     if (!TRACKING_URL) { setStatus('Supabase not configured for this build', 'err'); return Promise.resolve(); }
-    return fetch(TRACKING_URL + '?select=trip_id,trip_start_date,claimed,claim_number,compensation_type,payout_method,mailed,printed_at,filled_pdf_path,claimed_digitally', { headers: sbHeaders(false) })
+    return fetch(TRACKING_URL + '?select=trip_id,trip_start_date,claimed,claim_number,compensation_type,payout_method,mailed,printed_at,filled_pdf_path,claimed_digitally,refunded,refunded_at', { headers: sbHeaders(false) })
       .then(function (resp) {
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         return resp.json();
@@ -919,6 +925,8 @@
             printedAt: row.printed_at || null,
             filledPdfPath: row.filled_pdf_path || '',
             claimedDigitally: !!row.claimed_digitally,
+            refunded: !!row.refunded,
+            refundedAt: row.refunded_at || null,
           };
         });
         setStatus('synced with Supabase', 'ok');
@@ -959,6 +967,12 @@
         filled_pdf_path: patch.filledPdfPath || undefined,
         claimed_digitally: tracking[key].claimedDigitally,
         claimed_digitally_at: patch.claimedDigitally ? new Date().toISOString() : undefined,
+        refunded: tracking[key].refunded,
+        // Unlike mailed_at/claimed_digitally_at (one-way gates), refunded is
+        // a plain toggle -- ticking stamps it, unticking explicitly clears
+        // it (null, not undefined/"leave alone") so it doesn't keep a stale
+        // timestamp from a previous, since-corrected tick.
+        refunded_at: patch.hasOwnProperty('refunded') ? (patch.refunded ? new Date().toISOString() : null) : undefined,
       }]),
     }).then(function (resp) {
       if (!resp.ok) return resp.text().then(function (t) { throw new Error('HTTP ' + resp.status + ': ' + t); });
@@ -1488,14 +1502,23 @@
     if (!filed.length) { section.style.display = 'none'; return; }
     section.style.display = '';
     document.getElementById('alreadyFiledList').innerHTML = filed.map(function (r) {
-      var t = trackingFor(rowKey(r));
+      var key = rowKey(r);
+      var t = trackingFor(key);
       var compLabel = (COMPENSATION_TYPE_OPTIONS.filter(function (o) { return o[0] === t.compensationType; })[0] || [null, '–'])[1];
       var payoutLabel = (PAYOUT_METHOD_OPTIONS.filter(function (o) { return o[0] === t.payoutMethod; })[0] || [null, '–'])[1];
       var downloadHtml = t.filledPdfPath
         ? '<button type="button" class="link-btn download-btn" data-path="' + esc(t.filledPdfPath) + '">Download filled form</button>'
         : '';
       var filedViaHtml = '<span class="hint">' + (t.claimedDigitally ? 'Filed digitally' : 'Mailed') + '</span>';
-      return '<div class="filed-row">' +
+      var refundedHint = t.refunded && t.refundedAt
+        ? '<span class="hint">since ' + esc(new Date(t.refundedAt).toLocaleDateString('sv-SE')) + '</span>'
+        : '';
+      var isOpen = expandedLegs.has(key);
+      var toggleHtml = '<button type="button" class="expand-toggle" data-key="' + esc(key) + '" title="Show per-stop detail" aria-label="' + (isOpen ? 'Hide' : 'Show') + ' per-stop detail" aria-expanded="' + isOpen + '">' + (isOpen ? '▼' : '▶') + '</button>';
+      var stopsPanel = isOpen ? renderStopsPanel(r) : '';
+      return '<div class="filed-row' + (t.refunded ? ' refunded' : '') + '">' +
+        '<div class="filed-row-summary">' +
+        toggleHtml +
         '<span class="line-badge">' + esc(r.line) + '</span>' +
         '<span class="trip-num">' + (r.tripNumber ? '#' + esc(r.tripNumber) : '') + '</span>' +
         '<span class="num">' + fmtDate(r.date) + '</span>' +
@@ -1504,6 +1527,10 @@
         filedViaHtml +
         '<span class="claim-num">' + (t.claimNumber ? 'Claim #' + esc(t.claimNumber) : 'no claim # recorded yet') + '</span>' +
         downloadHtml +
+        '<label class="refunded-label"><input type="checkbox" class="refunded-check" data-key="' + esc(key) + '"' + (t.refunded ? ' checked' : '') + '> Refunded</label>' +
+        refundedHint +
+        '</div>' +
+        stopsPanel +
         '</div>';
     }).join('');
   }
@@ -1535,6 +1562,13 @@
       var sk = e.target.dataset.key, field = e.target.dataset.field, patch = {};
       patch[field] = e.target.value;
       saveTrackingRow(rowsByKey[sk], patch);
+      return;
+    }
+    if (e.target.classList.contains('refunded-check')) {
+      var rk = e.target.dataset.key;
+      saveTrackingRow(rowsByKey[rk], { refunded: e.target.checked });
+      renderAlreadyFiled();
+      keepInView('.refunded-check[data-key="' + rk + '"]');
     }
   });
   // Plain 'input' (not 'change'/full re-render), debounced, so typing a
