@@ -239,6 +239,7 @@
   .chip.tier75 { background: rgba(209, 69, 58, 0.15); color: #b8471f; }
   .chip.tier100 { background: var(--red-dim); color: #b23a2e; }
   .chip.canceled { background: var(--red-dim); color: #b23a2e; }
+  .chip.bus-replaced { background: rgba(148, 163, 179, 0.2); color: var(--ink-dim); cursor: help; border-bottom: 1px dotted var(--ink-faint); }
   .chip.single-source { background: rgba(148, 163, 179, 0.2); color: var(--ink-dim); cursor: help; border-bottom: 1px dotted var(--ink-faint); }
   .chip.ok { background: var(--green-dim); color: var(--green); }
 
@@ -1199,8 +1200,17 @@
     opts = opts || {};
     var key = rowKey(r);
     var checked = selected[key] ? ' checked' : '';
+    // bus_replaced: a hard rule, not a suggestion -- see build_compensation.py's
+    // _mentions_replacement_bus(). A replacement bus is itself a
+    // resalternativ (alternative route to the final destination), the exact
+    // undocumented mechanism Skånetrafiken cited rejecting a real claim on
+    // this project 2026-07-08 -- rather than guess whether a specific
+    // substitution would survive that argument, this is never claimable
+    // here, regardless of delay length.
     var tier = r.calc === 'cancelled'
       ? '<span class="chip canceled">Cancelled</span>'
+      : r.calc === 'bus_replaced'
+      ? '<span class="chip bus-replaced" title="A replacement bus was in effect for this journey -- treated as not claimable, since a replacement bus is itself an alternative route to your final destination.">🚌 Not claimable</span>'
       : '<span class="chip ' + tierClass(r) + '">' + r.deductionPct + '%' + (r.delayApprox ? ' approx.' : '') + '</span>';
     // Trafikverket-only gap-fill (src/trafikverket_merge.py): a real trip
     // GTFS-RT never saw, filled in from a second source -- but never

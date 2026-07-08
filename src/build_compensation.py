@@ -17,7 +17,9 @@ Only Sommarbiljett-valid trips delayed >=20 minutes at the final stop are
 eligible. When the final stop was never captured in the feed, the largest
 observed delay is used instead and flagged as approximate. Fully cancelled
 trips are listed but excluded from the calculation (the rules don't specify
-a clear formula for a trip that never ran at all).
+a clear formula for a trip that never ran at all). Trips whose reason
+mentions a replacement bus are also listed but excluded, regardless of
+delay length -- see docs/COMPENSATION_RULES.md for why.
 
 Usage:
     python src/build_compensation.py                # full 45-day retention window
@@ -27,6 +29,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 from datetime import datetime, timedelta
 
 import config
@@ -35,6 +38,30 @@ from build_dashboard import fetch_detail_rows
 from trafikverket_merge import merge_trafikverket
 
 TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "compensation_template.html")
+
+# Same patterns already validated against live data (2026-07-08, found 198
+# matching trips over 45 days) when investigating a real claim rejection --
+# see docs/TRAFIKVERKET_INTEGRATION.md and the "resalternativ" discussion in
+# COMPENSATION_RULES.md. Requested by the user as a hard rule, 2026-07-08:
+# any journey whose reason text mentions a replacement bus is never
+# claimable here, regardless of its delay length -- a replacement bus IS a
+# resalternativ (alternative route to the final destination), which is
+# exactly the undocumented mechanism Skånetrafiken cited when rejecting a
+# real claim on this project. Rather than guess whether a specific bus
+# substitution would or wouldn't survive that argument, this project simply
+# never recommends one.
+_REPLACEMENT_BUS_PATTERNS = [
+    re.compile(r"ersättningsbuss", re.IGNORECASE),
+    re.compile(r"buss.*ersätter", re.IGNORECASE | re.DOTALL),
+    re.compile(r"ersätter.*tåg", re.IGNORECASE | re.DOTALL),
+    re.compile(r"buss istället", re.IGNORECASE),
+]
+
+
+def _mentions_replacement_bus(reason):
+    if not reason:
+        return False
+    return any(p.search(reason) for p in _REPLACEMENT_BUS_PATTERNS)
 
 
 def _trip_earliest_time(r):
@@ -63,6 +90,17 @@ def compute_compensation(rows):
 
         if r["status"] == "CANCELLED_TRIP":
             out.append(dict(r, calc="cancelled", delayUsedMin=None, delayApprox=False))
+            continue
+
+        if _mentions_replacement_bus(r.get("reason")):
+            # Not "eligible" and not "cancelled" -- a distinct category so
+            # the UI can say exactly why this one isn't claimable, rather
+            # than silently dropping it (this project's own "no silent
+            # caps" principle). Still carries whatever delay figure exists,
+            # for visibility, but never a computed deduction amount.
+            approx = r["finalDelayMin"] is None
+            delay_min = r["finalDelayMin"] if not approx else r["maxDelayMin"]
+            out.append(dict(r, calc="bus_replaced", delayUsedMin=delay_min, delayApprox=approx))
             continue
 
         delay_min = r["finalDelayMin"]
@@ -145,8 +183,9 @@ def main():
 
     eligible = sum(1 for r in comp_rows if r["calc"] == "eligible")
     cancelled = sum(1 for r in comp_rows if r["calc"] == "cancelled")
-    print("Compensation page written to %s (%d eligible trips, %d cancelled trips listed but excluded, window %s..%s)" % (
-        args.out, eligible, cancelled, start_date, end_date))
+    bus_replaced = sum(1 for r in comp_rows if r["calc"] == "bus_replaced")
+    print("Compensation page written to %s (%d eligible trips, %d cancelled trips listed but excluded, %d bus-replaced trips listed but excluded, window %s..%s)" % (
+        args.out, eligible, cancelled, bus_replaced, start_date, end_date))
 
 
 if __name__ == "__main__":

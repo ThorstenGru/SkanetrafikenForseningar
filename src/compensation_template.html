@@ -262,6 +262,7 @@
   .chip.tier100 { background: var(--red-dim); color: #b23a2e; }
   .chip.canceled { background: var(--red-dim); color: #b23a2e; }
   .chip.approx { background: var(--panel-alt); color: var(--ink-faint); }
+  .chip.bus-replaced { background: var(--panel-alt); color: var(--ink-faint); cursor: help; }
 
   .option {
     display: flex;
@@ -391,6 +392,7 @@
         <option value="75">75% (40–59 min)</option>
         <option value="100">100% (60+ min)</option>
         <option value="cancelled">Cancelled (not calculated)</option>
+        <option value="bus_replaced">Not claimable (replacement bus)</option>
       </select>
 
       <label for="pageSize">Rows/page</label>
@@ -525,7 +527,8 @@
   function matchesFilters(r) {
     var tf = tierFilterEl.value;
     if (tf === 'cancelled' && r.calc !== 'cancelled') return false;
-    if (tf && tf !== 'cancelled' && String(r.deductionPct) !== tf) return false;
+    if (tf === 'bus_replaced' && r.calc !== 'bus_replaced') return false;
+    if (tf && tf !== 'cancelled' && tf !== 'bus_replaced' && String(r.deductionPct) !== tf) return false;
     var q = qEl.value.trim().toLowerCase();
     if (q) {
       var hay = [r.line, r.tripNumber, r.dest].join(' ').toLowerCase();
@@ -563,6 +566,22 @@
           '<td>' + esc(r.dest || '–') + '</td>' +
           '<td class="num">' + fmtKm(r.distanceKm) + '</td>' +
           '<td colspan="4"><span class="chip canceled">Cancelled — not calculated</span></td>' +
+          '</tr>';
+      }
+      if (r.calc === 'bus_replaced') {
+        // Hard rule, not a suggestion -- see build_compensation.py's
+        // _mentions_replacement_bus(). A replacement bus is itself a
+        // resalternativ (alternative route to the final destination), the
+        // exact undocumented mechanism Skånetrafiken cited rejecting a real
+        // claim on this project 2026-07-08.
+        return '<tr>' +
+          '<td class="num">' + fmtDate(r.date) + '</td>' +
+          '<td><span class="line-badge">' + esc(r.line) + '</span></td>' +
+          '<td>' + esc(r.vehicleType) + '</td>' +
+          '<td class="num">' + esc(r.tripNumber || '–') + '</td>' +
+          '<td>' + esc(r.dest || '–') + '</td>' +
+          '<td class="num">' + fmtKm(r.distanceKm) + '</td>' +
+          '<td colspan="4"><span class="chip bus-replaced" title="A replacement bus was in effect for this journey.">🚌 Not claimable — replacement bus in effect</span></td>' +
           '</tr>';
       }
       return '<tr>' +

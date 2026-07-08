@@ -720,7 +720,55 @@ not "unknown" — because the absence of a row is itself a reliable signal
 under this policy (anything ≥5 min would have been recorded), not a gap
 in knowledge.
 
-**Interactive route map (added 2026-07-08).** Each expanded stops-panel
+## 20. "Not claimable" — replacement-bus journeys, 2026-07-08
+
+Requested by the user as a hard rule, after a real claim (train 11316,
+Malmö Hyllie → Helsingborg C, 2026-07-08) was rejected by Skånetrafiken
+citing "resalternativ" (alternative route) — an undocumented mechanism
+(not found in any of their public terms, the ticket-terms PDF, or the
+underlying statute) by which a delay can apparently be judged as
+effectively under 20 minutes if an alternative route to the final
+destination existed. See the Trafikverket integration doc's findings for
+the full research. A replacement bus **is** exactly such an alternative
+route — Skånetrafiken is providing it specifically so passengers still
+reach their destination despite the train being cancelled/disrupted.
+
+**Decision: any journey whose reason text mentions a replacement bus is
+never claimable here, regardless of delay length.** Rather than try to
+guess case-by-case whether a specific bus substitution would or wouldn't
+survive Skånetrafiken's resalternativ argument, this project treats the
+whole category as excluded — consistent with this project's standing
+principle (established the same day) of only ever recommending a claim
+when the compensation rule fully, confirmably applies, never on an
+approximation: a replacement bus injects exactly the kind of uncertainty
+that principle exists to filter out.
+
+**Implementation** (`build_compensation.py`'s `_mentions_replacement_bus()`,
+shared by `compute_compensation()` for both `compensation.html` and
+`claims.html` via `build_claims.py`): matches `reason` against the same
+patterns already validated empirically against 45 days of live data while
+investigating the rejected claim (`ersättningsbuss`, `buss ... ersätter`,
+`ersätter ... tåg`, `buss istället`) — found 198 distinct trips matching in
+that window. A matching trip gets `calc: "bus_replaced"` — a third category
+alongside `"eligible"` and `"cancelled"`, checked *before* the normal delay
+threshold, so even a 60+ minute delay with a replacement bus is excluded.
+Still listed (with its delay figure, for visibility — this project's own
+"no silent caps" principle) with a distinct 🚌 "Not claimable" chip, never
+with a computed deduction amount, and never picked up by `claims.html`'s
+`ruleFullyApplies()` auto-suggestion (it already requires `calc ===
+"eligible"`).
+
+**Known limitation, accepted deliberately:** text matching over free-form
+Swedish alert descriptions is inherently approximate — a phrasing this
+project hasn't seen yet could slip through, and a mention of "buss" in an
+unrelated context (rare, but not impossible) could over-exclude. Given the
+rule's purpose (avoid recommending a claim that's likely to fail on
+grounds this project can't verify), a false exclusion is the safer failure
+mode than a false inclusion.
+
+## 21. Interactive route map (added 2026-07-08)
+
+Each expanded stops-panel
 also renders a Leaflet map (OpenStreetMap tiles, loaded from a CDN — no
 API key, no additional Trafiklab calls) with a polyline through every
 geolocated stop and a marker per station: dark for the two endpoints,
