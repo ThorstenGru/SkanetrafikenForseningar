@@ -180,7 +180,7 @@ real value (better reasons, and genuine new coverage for the 95% GTFS-RT
 misses), but only as a *secondary, corroborating* source, never as an
 overriding one.
 
-## What's built now (schema + module skeleton only — not wired into scan.yml)
+## What's built (schema, scanner, and merge logic — see "Live end-to-end" below for current status)
 
 - `src/migrations/012_trafikverket_train_announcements.sql` — three new
   tables:
@@ -214,34 +214,88 @@ overriding one.
 GitHub Actions secret on this repo (same `gh secret set` pattern as the
 existing `TRAFIKLAB_*` keys — see [RUNBOOK.md](RUNBOOK.md)).
 
-## Explicitly NOT done yet
+## Live end-to-end, 2026-07-08 — everything below is now actually running
 
-Question #3 is resolved with a hard rule (`canceled` never overrides
-GTFS-RT), so plain ingestion into `train_announcements` is no longer
-blocked on trust — but nothing downstream may *act* on that column until
-the merge logic below actually implements the rule.
+Requested by the user explicitly, in this order: build the merge logic
+(with the hard rule enforced in code) *first*, only then turn on
+ingestion. All five previously-open items are done:
 
-1. **Not wired into `scan.yml`** or any GitHub Actions workflow yet — the
-   module itself is ready to run standalone; wiring it in is a small,
-   mechanical step (add a step + secret to `scan.yml`, same shape as the
-   existing Trafiklab fetch), just not done in this pass.
-2. **No merge logic in `build_dashboard.py`/`build_compensation.py`/
-   `build_claims.py` implementing the Question #3 rule.** This is the part
-   that actually matters for correctness — until it exists,
-   `train_announcements` data must not influence any claim, even after the
-   scanner is running, or the hard rule is just documentation with nothing
-   enforcing it.
-3. **`location_signature_map` not actually populated.** Question #2 found
-   the right source (`TrainStation`) but nothing has imported it yet.
-4. **No coverage-gap re-measurement.** Once live, worth re-running the same
-   kind of empirical check that found the 5% GTFS-RT figure — what fraction
-   of scheduled Skåne rail trips does Trafikverket actually report on, and
-   does it actually catch the 04:50/05:20-style gaps? — to know whether
-   this genuinely closes the gap or only partially does.
-5. **Migration not applied to the live Supabase project yet** — schema
-   creation itself is low-risk (empty tables, and no code reads from them
-   yet), holding only because there's no ingestion running to populate it
-   until #1 is done.
+1. **Merge logic exists and enforces the hard rule**: `src/
+   trafikverket_merge.py`. Two things only — enrich `reason` text on
+   GTFS-RT rows that have none, and gap-fill trips GTFS-RT never saw at
+   all, but ONLY when Trafikverket gives an unambiguous real recorded
+   arrival time. The exact "Canceled, no time at all" pattern that turned
+   out wrong for train 1206 (Question #3) is explicitly skipped, not
+   guessed on. Gap-filled rows are tagged `singleSourceOnly`, which
+   `claims_template.html`'s `ruleFullyApplies()` treats the same as an
+   unconfirmed approximation — shown, never auto-recommended. Wired into
+   both `build_compensation.py` and `build_claims.py`, right after
+   `fetch_detail_rows()`.
+2. **`location_signature_map` populated**: `src/
+   build_location_signature_map.py`, matching Trafikverket's own
+   `TrainStation` object against this project's GTFS stops by coordinates
+   (500 m radius) — no manual station-by-station typing needed. **117
+   stations matched** (Skåne plus a few cross-border/neighbouring-region
+   ones, e.g. Karlskrona C, København H) out of 718 fetched nationally.
+3. **Migration applied** to the live Supabase project.
+4. **Wired into `scan.yml`** as a `continue-on-error` step — a Trafikverket
+   outage or rate limit must not take down the main scan/build/deploy
+   pipeline, since this is optional infrastructure. `merge_trafikverket()`
+   itself also degrades to a no-op on any failure, for the same reason
+   applied one layer deeper (a bug here must not break `claims.html`/
+   `compensation.html` generation, which — unlike the scanner step — is
+   NOT `continue-on-error`).
+5. **Coverage checked** — see below.
+
+**Two real bugs found by testing live rather than trusting the skeleton**,
+both fixed same-day:
+- `CardinalityViolation`: a single poll can return more than one
+  `TrainAnnouncement` for the same (train, date, station, activity) key —
+  e.g. a superseded record next to its replacement, different `ActivityId`.
+  The batched `INSERT ... ON CONFLICT DO UPDATE` can't apply twice to the
+  same key in one statement. Fixed by deduping to the latest `ModifiedTime`
+  per key before the upsert.
+- `NotNullViolation` on `trafikverket_poll_state.changeid`: the response
+  only includes the `INFO.LASTCHANGEID` block needed to keep polling
+  incrementally when the *request* itself carries a `changeid` attribute —
+  confirmed live that this must be `"0"` on the very first request, not
+  omitted. Omitting it (the original skeleton's behavior) silently gets a
+  response with no `INFO` block at all, which then tried to persist
+  `changeid = NULL`.
+
+Both were caught immediately by actually triggering `scan.yml` and reading
+the Action logs, not assumed away — the first run's `continue-on-error`
+correctly contained the failure to just that one step (git commit, page
+builds, and deploy all still succeeded that run) while the underlying bug
+got found and fixed.
+
+## Coverage: an early, promising, but not yet rigorous signal
+
+A single poll (2026-07-08, ~90 min back to 4 h forward — Trafikverket's own
+usable window, see Question #1) found:
+
+| | Count |
+|---|---|
+| Distinct (train, date) trips Trafikverket reported | 476 |
+| ...also present in GTFS-RT (`delays`/`trip_cancellations`) | 158 (33%) |
+| ...GTFS-RT never saw at all | **318 (67%)** |
+
+That's a large, promising signal — roughly 3x as many distinct Skåne rail
+trip-instances visible through Trafikverket as through GTFS-RT in the same
+window. It is **not** the same rigorous measurement that established the
+5% GTFS-RT figure (`coverage_check.py`, a full day's schedule vs. a full
+day's `seen_trips`) — this is one ~5.5-hour window, not a full day, and
+doesn't yet say how many of those 318 were genuinely Sommarbiljett-eligible
+rail trips vs. buses/other regions/unrelated national trains sharing a
+number. `build_gapfill_rows()`'s own first live run only turned 0 of them
+into actual claim candidates (114 skipped as unresolvable or ambiguous) —
+expected for a first, narrow, 30-minutes-old dataset, not a sign the 318
+figure is wrong; most of that gap needs either a longer accumulation
+window or stricter within-window candidates than existed at that moment.
+**Next step, not yet done:** let this run for a few real days, then re-run
+this same comparison query over a full day's data, the way
+`coverage_check.py` did for the original 5% figure — a single poll's
+number is a hopeful early read, not a conclusion.
 
 ## Sources
 
