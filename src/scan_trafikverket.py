@@ -195,6 +195,25 @@ def to_row(announcement, now):
         return None
 
 
+def dedupe_rows(rows):
+    """A single poll can return more than one TrainAnnouncement object for
+    the same (train, date, station, activity) natural key -- e.g. a
+    superseded record alongside its replacement, each with a different
+    ActivityId (confirmed live 2026-07-08: this exact scenario made
+    upsert_train_announcements_batch's single INSERT...ON CONFLICT
+    statement raise CardinalityViolation, since Postgres can't apply
+    ON CONFLICT DO UPDATE twice to the same row in one statement). Keeps
+    whichever has the latest modified_time per key, same idiom scan.py
+    already uses for its own cancellation-row dedup."""
+    by_key = {}
+    for r in rows:
+        key = (r["advertised_train_number"], r["traffic_date"], r["location_signature"], r["activity_type"])
+        existing = by_key.get(key)
+        if existing is None or r["modified_time"] >= existing["modified_time"]:
+            by_key[key] = r
+    return list(by_key.values())
+
+
 def load_location_signatures(cur):
     cur.execute("SELECT location_signature FROM location_signature_map")
     return [r[0] for r in cur.fetchall()]
@@ -217,6 +236,7 @@ def main():
 
         raw_announcements, next_changeid = fetch(changeid, location_signatures)
         rows = [r for r in (to_row(a, now) for a in raw_announcements) if r is not None]
+        rows = dedupe_rows(rows)
 
         inserted = db.upsert_train_announcements_batch(cur, rows, now)
         db.set_trafikverket_changeid(cur, next_changeid, now)
