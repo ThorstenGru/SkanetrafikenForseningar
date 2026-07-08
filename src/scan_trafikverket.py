@@ -81,7 +81,15 @@ def build_query(changeid, location_signatures):
     else:
         location_block = "<OR>%s</OR>" % location_filter
 
-    changeid_attr = ' changeid="%s"' % changeid if changeid else ""
+    # CONFIRMED live 2026-07-08: the response only includes the INFO/
+    # LASTCHANGEID block (needed to advance polling) when the request
+    # itself carries a changeid attribute -- including on the very first
+    # ever request, where it must be "0" (there is no separate
+    # "give me change info" flag; omitting the attribute entirely, as this
+    # skeleton originally did, silently gets a response with no INFO block
+    # at all, which then persisted `changeid=NULL` and broke the next poll
+    # with a NOT NULL constraint violation).
+    changeid_attr = ' changeid="%s"' % (changeid or "0")
 
     return """<REQUEST>
   <LOGIN authenticationkey="%s" />
@@ -114,12 +122,16 @@ def fetch(changeid, location_signatures):
     if resp.status_code != 200:
         raise RuntimeError("Trafikverket TrainAnnouncement failed: HTTP %d: %s" % (resp.status_code, resp.text[:500]))
     payload = resp.json()
-    # VERIFY: envelope shape (RESPONSE.RESULT[0].TrainAnnouncement /
-    # RESPONSE.RESULT[0].INFO.LASTCHANGEID) is the commonly-documented one
-    # for this API family but not confirmed against a live response here.
+    # CONFIRMED live 2026-07-08: RESPONSE.RESULT[0].TrainAnnouncement /
+    # RESPONSE.RESULT[0].INFO.LASTCHANGEID is the real envelope shape --
+    # but INFO is only present when the request itself sent a changeid
+    # attribute (see build_query's own note). No fallback to the old
+    # changeid here on purpose: if INFO is ever missing again, that should
+    # surface as a loud NOT NULL failure in set_trafikverket_changeid, not
+    # silently persist a stale/unchanged value.
     result = payload["RESPONSE"]["RESULT"][0]
     announcements = result.get("TrainAnnouncement", [])
-    next_changeid = result.get("INFO", {}).get("LASTCHANGEID", changeid)
+    next_changeid = result["INFO"]["LASTCHANGEID"]
     return announcements, next_changeid
 
 
