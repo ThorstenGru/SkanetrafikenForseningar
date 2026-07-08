@@ -164,8 +164,10 @@ def build_gapfill_rows(cur, start_date, end_date):
             final_delay = _delay_min(dest_arrival["advertised_at"], dest_arrival["estimated_at"], dest_arrival["actual_at"])
             if final_delay is None:
                 # The exact ambiguous pattern found for train 1206: Canceled
-                # with no recorded time at all. Not enough to claim on.
-                skipped += 1
+                # with no recorded time at all. Not enough to claim on --
+                # counted once below (the group as a whole is skipped, not
+                # counted here too, or a group with several candidates would
+                # be double-counted for a single logical failure).
                 continue
 
             origin_departure = None
