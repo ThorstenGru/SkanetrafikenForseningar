@@ -27,6 +27,17 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Restore stop_times cache
+        # This workflow never refreshes the static index itself, so unlike
+        # scan.yml/backfill.yml there's nothing to save afterward -- just a
+        # restore to make the cache available to build_claims.py.
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: data/stop_times_cache.sqlite
+          key: stop-times-${{ hashFiles('data/static_index.sqlite') }}
+          restore-keys: stop-times-
+
       - name: Build content pages
         uses: ./.github/actions/build-content-pages
         with:

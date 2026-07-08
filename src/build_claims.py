@@ -66,17 +66,21 @@ def load_full_stop_schedule(trip_ids):
     departure_time), ...] for every station on the trip's static timetable
     -- not just the ones a delay happened to be recorded for. Scoped to the
     trip_ids actually appearing on this page (dozens, not the whole
-    network) via static_index.sqlite's stop_times table (added
-    2026-07-08)."""
-    if not trip_ids:
+    network) via config.STOP_TIMES_CACHE_PATH, a separate never-committed
+    file (see its own note in config.py/static_index.py) restored via
+    actions/cache -- may not exist yet (cold cache), in which case this
+    degrades gracefully to {} and merge_full_schedule() leaves the sparse
+    live-only stop list untouched."""
+    if not trip_ids or not os.path.exists(config.STOP_TIMES_CACHE_PATH):
         return {}
-    conn = sqlite3.connect(config.STATIC_INDEX_PATH)
+    conn = sqlite3.connect(config.STOP_TIMES_CACHE_PATH)
     try:
+        conn.execute("ATTACH DATABASE ? AS main_idx", (config.STATIC_INDEX_PATH,))
         placeholders = ",".join("?" * len(trip_ids))
         rows = conn.execute(
             """SELECT st.trip_id, st.stop_sequence, st.stop_id, s.stop_name, st.arrival_time, st.departure_time
                FROM stop_times st
-               LEFT JOIN stops s ON s.stop_id = st.stop_id
+               LEFT JOIN main_idx.stops s ON s.stop_id = st.stop_id
                WHERE st.trip_id IN (%s)
                ORDER BY st.trip_id, st.stop_sequence""" % placeholders,
             list(trip_ids),
@@ -85,6 +89,8 @@ def load_full_stop_schedule(trip_ids):
         for trip_id, seq, stop_id, stop_name, arr, dep in rows:
             out.setdefault(trip_id, []).append((seq, stop_id, stop_name, arr, dep))
         return out
+    except sqlite3.OperationalError:
+        return {}  # e.g. a stale/corrupt cache missing the stop_times table
     finally:
         conn.close()
 

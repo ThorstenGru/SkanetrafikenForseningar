@@ -31,6 +31,13 @@ RETENTION_DAYS = 45
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(REPO_ROOT, "data")
 STATIC_INDEX_PATH = os.path.join(DATA_DIR, "static_index.sqlite")
+# Every trip's full scheduled stop-by-stop timetable (added 2026-07-08 for
+# claims.html's complete-journey view) is ~150+ MB for the whole network --
+# far past GitHub's 100 MB per-file commit limit. Kept as a separate,
+# NEVER-COMMITTED file (see .gitignore), persisted across GH Actions runs
+# via actions/cache instead of git, since it only needs to survive between
+# workflow runs, not be version-controlled.
+STOP_TIMES_CACHE_PATH = os.path.join(DATA_DIR, "stop_times_cache.sqlite")
 RAW_STATIC_CACHE_DIR = os.path.join(REPO_ROOT, ".gtfs_static_raw")  # never committed
 
 

@@ -1,15 +1,18 @@
 """Download and cache Trafiklab's static GTFS Regional data, then distill it
 into a small SQLite index (routes, stops, per-trip destination, distance,
-calendar service-day rules, and each trip's full scheduled stop-by-stop
-timetable) that we keep committed to the repo. The raw GTFS zip (~300 MB
-uncompressed) is downloaded to a scratch directory and deleted again — it
-is never committed.
+and calendar service-day rules) that we keep committed to the repo. The raw
+GTFS zip (~300 MB uncompressed) is downloaded to a scratch directory and
+deleted again — it is never committed.
 
-`stop_times` (added 2026-07-08) exists so claims.html can show a trip's
-complete journey -- every station, not just the ones a delay happened to
-be recorded for (see config.MIN_DELAY_TO_RECORD_SEC) -- without any extra
-Trafiklab API calls, since this is data already inside the same weekly
-download.
+A second, separate file at config.STOP_TIMES_CACHE_PATH (added
+2026-07-08) holds every trip's full scheduled stop-by-stop timetable, so
+claims.html can show a trip's complete journey -- every station, not just
+the ones a delay happened to be recorded for (see
+config.MIN_DELAY_TO_RECORD_SEC) -- without any extra Trafiklab API calls,
+since this is data already inside the same weekly download. It is
+DELIBERATELY NEVER COMMITTED: the full network's timetable is 150+ MB,
+well past GitHub's 100 MB per-file commit limit (learned the hard way).
+Persisted across GH Actions runs via actions/cache instead.
 
 The calendar/calendar_dates tables exist so coverage_check.py can answer
 "which trip_ids were actually scheduled to run on date X" without needing
@@ -183,16 +186,27 @@ def rebuild_index():
         )
         conn.execute("CREATE TABLE calendar_dates (service_id TEXT, date TEXT, exception_type INTEGER)")
         conn.execute("CREATE INDEX idx_calendar_dates_svc ON calendar_dates (service_id, date)")
-        conn.execute(
+
+        conn.executemany("INSERT INTO routes VALUES (?, ?, ?, ?)", [(k, v[0], v[1], v[2]) for k, v in routes.items()])
+        conn.executemany("INSERT INTO stops VALUES (?, ?, ?, ?)", [(k, v[0], v[1], v[2]) for k, v in stops.items()])
+
+        # Kept out of the committed static_index.sqlite entirely -- the
+        # full network's stop-by-stop timetable is 150+ MB, well past
+        # GitHub's 100 MB per-file commit limit. See config.py's own note;
+        # this file is restored/saved via actions/cache in the workflows,
+        # never git.
+        if os.path.exists(config.STOP_TIMES_CACHE_PATH):
+            os.remove(config.STOP_TIMES_CACHE_PATH)
+        st_conn = sqlite3.connect(config.STOP_TIMES_CACHE_PATH)
+        st_conn.execute(
             "CREATE TABLE stop_times ("
             "trip_id TEXT, stop_sequence INTEGER, stop_id TEXT, "
             "arrival_time TEXT, departure_time TEXT)"
         )
-        conn.execute("CREATE INDEX idx_stop_times_trip ON stop_times (trip_id, stop_sequence)")
-
-        conn.executemany("INSERT INTO routes VALUES (?, ?, ?, ?)", [(k, v[0], v[1], v[2]) for k, v in routes.items()])
-        conn.executemany("INSERT INTO stops VALUES (?, ?, ?, ?)", [(k, v[0], v[1], v[2]) for k, v in stops.items()])
-        conn.executemany("INSERT INTO stop_times VALUES (?, ?, ?, ?, ?)", all_stop_times)
+        st_conn.execute("CREATE INDEX idx_stop_times_trip ON stop_times (trip_id, stop_sequence)")
+        st_conn.executemany("INSERT INTO stop_times VALUES (?, ?, ?, ?, ?)", all_stop_times)
+        st_conn.commit()
+        st_conn.close()
 
         with open(trips_path, "r", encoding="utf-8-sig", newline="") as f:
             trip_rows = []

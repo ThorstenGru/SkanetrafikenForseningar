@@ -40,6 +40,14 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Restore stop_times cache
+        continue-on-error: true  # a cache miss/service hiccup just means the complete-journey merge degrades gracefully, not a build failure
+        uses: actions/cache/restore@v4
+        with:
+          path: data/stop_times_cache.sqlite
+          key: stop-times-${{ hashFiles('data/static_index.sqlite') }}
+          restore-keys: stop-times-
+
       - name: Backfill from KoDa historical archive
         # Leaves ~50 of the job's 350-min budget for the remaining steps.
         # Without this, a stalled KoDa endpoint could consume the entire
@@ -86,6 +94,13 @@ jobs:
           sommarbiljett-purchased-at: ${{ secrets.SOMMARBILJETT_PURCHASED_AT }}
           supabase-anon-key: ${{ secrets.SUPABASE_ANON_KEY }}
           claim-tracking-passphrase: ${{ secrets.CLAIM_TRACKING_PASSPHRASE }}
+
+      - name: Save stop_times cache
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: data/stop_times_cache.sqlite
+          key: stop-times-${{ hashFiles('data/static_index.sqlite') }}
 
       - uses: actions/upload-pages-artifact@v3
         with:

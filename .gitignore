@@ -5,3 +5,4 @@ __pycache__/
 /dashboard.html
 /pages_site/
 /data/forseningar.db
+/data/stop_times_cache.sqlite

@@ -37,6 +37,19 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # stop_times_cache.sqlite (every trip's full timetable, for claims.html's
+      # complete-journey view) is 150+ MB -- too big to commit to git (see
+      # config.py's own note), so it round-trips through actions/cache
+      # instead, keyed on the committed static_index.sqlite's own hash so it
+      # naturally invalidates whenever that gets refreshed (~weekly).
+      - name: Restore stop_times cache
+        continue-on-error: true  # a cache miss/service hiccup just means the complete-journey merge degrades gracefully, not a build failure
+        uses: actions/cache/restore@v4
+        with:
+          path: data/stop_times_cache.sqlite
+          key: stop-times-${{ hashFiles('data/static_index.sqlite') }}
+          restore-keys: stop-times-
+
       - name: Run scanner
         env:
           TRAFIKLAB_STATIC_KEY: ${{ secrets.TRAFIKLAB_STATIC_KEY }}
@@ -70,6 +83,22 @@ jobs:
           sommarbiljett-purchased-at: ${{ secrets.SOMMARBILJETT_PURCHASED_AT }}
           supabase-anon-key: ${{ secrets.SUPABASE_ANON_KEY }}
           claim-tracking-passphrase: ${{ secrets.CLAIM_TRACKING_PASSPHRASE }}
+
+      # Re-evaluates the hash *now*, after a possible refresh above -- if
+      # scan.py rebuilt the static index this run, this saves under a new
+      # key reflecting the fresh timetable; otherwise the key matches what
+      # was just restored and this is a harmless no-op (can't overwrite an
+      # existing cache entry, nor does it need to).
+      - name: Save stop_times cache
+        # Never fails the job over this -- a cache save is an optimization
+        # for future runs, not something this run's own success depends on
+        # (and GH Actions cache keys are immutable, so re-saving under an
+        # already-existing key is an expected, harmless no-op most runs).
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: data/stop_times_cache.sqlite
+          key: stop-times-${{ hashFiles('data/static_index.sqlite') }}
 
       - uses: actions/upload-pages-artifact@v3
         with:
