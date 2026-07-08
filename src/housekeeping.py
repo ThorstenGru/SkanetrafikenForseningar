@@ -44,6 +44,12 @@ def main():
         cur.execute("DELETE FROM scan_runs WHERE run_at < %s", (cutoff_ts,))
         counts["scan_runs_deleted"] = cur.rowcount
 
+        # Added 2026-07-08 alongside the Trafikverket integration -- without
+        # this, train_announcements has no retention path at all and grows
+        # forever (see docs/TRAFIKVERKET_INTEGRATION.md).
+        cur.execute("DELETE FROM train_announcements WHERE traffic_date < %s", (cutoff_date,))
+        counts["train_announcements_deleted"] = cur.rowcount
+
         conn.commit()
         print("Housekeeping done (cutoff %s): %s" % (cutoff_date, counts))
     except Exception as exc:
@@ -54,10 +60,11 @@ def main():
         cur.execute(
             """INSERT INTO housekeeping_runs
                (run_at, cutoff_date, delays_deleted, cancellations_deleted, seen_trips_deleted,
-                line_visibility_deleted, line_anomalies_deleted, alerts_deleted, scan_runs_deleted, error)
+                line_visibility_deleted, line_anomalies_deleted, alerts_deleted, scan_runs_deleted,
+                train_announcements_deleted, error)
                VALUES (%(run_at)s, %(cutoff_date)s, %(delays_deleted)s, %(cancellations_deleted)s,
                        %(seen_trips_deleted)s, %(line_visibility_deleted)s, %(line_anomalies_deleted)s,
-                       %(alerts_deleted)s, %(scan_runs_deleted)s, %(error)s)""",
+                       %(alerts_deleted)s, %(scan_runs_deleted)s, %(train_announcements_deleted)s, %(error)s)""",
             {
                 "run_at": now, "cutoff_date": cutoff_date, "error": error,
                 "delays_deleted": counts.get("delays_deleted"),
@@ -67,6 +74,7 @@ def main():
                 "line_anomalies_deleted": counts.get("line_anomalies_deleted"),
                 "alerts_deleted": counts.get("alerts_deleted"),
                 "scan_runs_deleted": counts.get("scan_runs_deleted"),
+                "train_announcements_deleted": counts.get("train_announcements_deleted"),
             },
         )
         conn.commit()
