@@ -1,0 +1,36 @@
+name: DB activity check (one-off)
+
+on:
+  workflow_dispatch:
+    inputs:
+      kill_pid:
+        description: "Optional: PID to terminate via pg_terminate_backend()"
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: List sessions/locks (or terminate one)
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -n "${{ github.event.inputs.kill_pid }}" ]; then
+            python src/db_activity_check.py --kill "${{ github.event.inputs.kill_pid }}"
+          else
+            python src/db_activity_check.py
+          fi
