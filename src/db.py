@@ -141,6 +141,60 @@ def upsert_alerts_batch(cur, alerts, now):
     return len(inserted_uids)
 
 
+TRAIN_ANNOUNCEMENT_COLUMNS = [
+    "advertised_train_number", "traffic_date", "location_signature", "activity_type",
+    "advertised_time_at_location", "estimated_time_at_location", "time_at_location",
+    "canceled", "track_at_location", "deviation_text", "operator", "modified_time",
+]
+
+
+def upsert_train_announcements_batch(cur, rows, now):
+    """rows: list of dicts with TRAIN_ANNOUNCEMENT_COLUMNS keys, from
+    scan_trafikverket.py. Returns count of newly-inserted rows. Mirrors
+    upsert_delays_batch's "don't let a stale re-poll clobber a newer value"
+    guard, keyed on Trafikverket's own modified_time instead of last_seen_at
+    since that's the field their API uses to signal "this changed"."""
+    if not rows:
+        return 0
+    values = [tuple(row[c] for c in TRAIN_ANNOUNCEMENT_COLUMNS) + (now, now) for row in rows]
+    results = psycopg2.extras.execute_values(
+        cur,
+        """INSERT INTO train_announcements (%s, first_seen_at, last_seen_at)
+           VALUES %%s
+           ON CONFLICT (advertised_train_number, traffic_date, location_signature, activity_type) DO UPDATE SET
+               estimated_time_at_location = CASE WHEN EXCLUDED.modified_time >= train_announcements.modified_time THEN EXCLUDED.estimated_time_at_location ELSE train_announcements.estimated_time_at_location END,
+               time_at_location = CASE WHEN EXCLUDED.modified_time >= train_announcements.modified_time THEN EXCLUDED.time_at_location ELSE train_announcements.time_at_location END,
+               canceled = CASE WHEN EXCLUDED.modified_time >= train_announcements.modified_time THEN EXCLUDED.canceled ELSE train_announcements.canceled END,
+               track_at_location = CASE WHEN EXCLUDED.modified_time >= train_announcements.modified_time THEN EXCLUDED.track_at_location ELSE train_announcements.track_at_location END,
+               deviation_text = CASE WHEN EXCLUDED.modified_time >= train_announcements.modified_time THEN EXCLUDED.deviation_text ELSE train_announcements.deviation_text END,
+               modified_time = GREATEST(train_announcements.modified_time, EXCLUDED.modified_time),
+               last_seen_at = GREATEST(train_announcements.last_seen_at, EXCLUDED.last_seen_at),
+               poll_count = train_announcements.poll_count + 1
+           RETURNING (xmax = 0) AS inserted""" % ", ".join(TRAIN_ANNOUNCEMENT_COLUMNS),
+        values,
+        page_size=1000,
+        fetch=True,
+    )
+    return sum(1 for r in results if r[0])
+
+
+def get_trafikverket_changeid(cur):
+    """None on first-ever run — scan_trafikverket.py must then send a
+    changeid-free query to establish a starting point, per Trafikverket's
+    own documented polling pattern (see docs/TRAFIKVERKET_INTEGRATION.md)."""
+    cur.execute("SELECT changeid FROM trafikverket_poll_state WHERE id")
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def set_trafikverket_changeid(cur, changeid, now):
+    cur.execute(
+        """INSERT INTO trafikverket_poll_state (id, changeid, updated_at) VALUES (TRUE, %s, %s)
+           ON CONFLICT (id) DO UPDATE SET changeid = EXCLUDED.changeid, updated_at = EXCLUDED.updated_at""",
+        (changeid, now),
+    )
+
+
 def record_scan_run(cur, stats):
     cur.execute(
         """INSERT INTO scan_runs (run_at, delays_seen, delays_new, cancellations_seen, alerts_seen, alerts_new, static_refreshed, error)

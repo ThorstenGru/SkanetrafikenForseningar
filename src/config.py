@@ -71,6 +71,30 @@ def koda_key():
     return get_key("KODA_API_KEY")
 
 
+def trafikverket_key():
+    """API key for Trafikverket's own open API (api.trafikinfo.trafikverket.se)
+    — a completely separate registration/product from Trafiklab, used only
+    by scan_trafikverket.py. See docs/TRAFIKVERKET_INTEGRATION.md."""
+    return get_key("TRAFIKVERKET_KEY")
+
+
+TRAFIKVERKET_API_URL = "https://api.trafikinfo.trafikverket.se/v2/data.json"
+
+# CONFIRMED (not just inferred), 2026-07-08, with a real key: TrainAnnouncement
+# is a live departure board, not an archive. Querying AdvertisedTrainIdent=1206
+# (a real Skåne train) for AdvertisedTimeAtLocation on 2026-06-25 (13 days
+# before "today") and on 2026-05-15 (~8 weeks before) both returned zero rows,
+# while the same query for "today" returned a full 50+ row stop-by-stop result.
+# The API DOES return ~2 weeks of FUTURE schedule per train (also confirmed),
+# just no past history beyond a short recent window. There is no way to
+# backfill past delays through this endpoint — this integration can only ever
+# improve coverage going forward, exactly like Trafiklab's own GTFS-RT (which
+# is why backfill_koda.py exists as a *separate* historical product for that
+# feed). See docs/TRAFIKVERKET_INTEGRATION.md for the full writeup.
+TRAFIKVERKET_ANNOUNCEMENT_LOOKBACK_MIN = 90
+TRAFIKVERKET_ANNOUNCEMENT_LOOKAHEAD_HOURS = 4
+
+
 # Supabase project serving this data — used only by build_claims.py to let
 # the built claims.html write directly to Postgres via Supabase's REST API
 # (PostgREST), bypassing the need for any server this static site doesn't

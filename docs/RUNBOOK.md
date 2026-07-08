@@ -24,6 +24,16 @@ session.
 Also remember to change the password for `ThorstenGrund@icloud.com`, which
 was exposed in the same earlier conversation.
 
+## Trafikverket API key
+
+`TRAFIKVERKET_KEY` — a separate registration from the `TRAFIKLAB_*` keys
+above, at `data.trafikverket.se` (not developer.trafiklab.se). Powers
+`src/scan_trafikverket.py`, the second rail-delay source described in
+[TRAFIKVERKET_INTEGRATION.md](TRAFIKVERKET_INTEGRATION.md) — not yet wired
+into any scheduled workflow. Rotate the same way as the Trafiklab keys:
+generate a new key under "Mina nycklar" at `data.trafikverket.se/mypage/systems`,
+then `gh secret set TRAFIKVERKET_KEY --body "NEW_KEY" -R ThorstenGru/SkanetrafikenForseningar`.
+
 ## Run a manual scan
 
 **Via GitHub Actions (recommended, nothing to set up locally):**

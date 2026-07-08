@@ -214,6 +214,15 @@
     color: #182430;
   }
 
+  .trip-num {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-faint);
+    white-space: nowrap;
+    cursor: help;
+    border-bottom: 1px dotted var(--ink-faint);
+  }
+
   .chip {
     display: inline-block;
     padding: 2px 8px;
@@ -373,8 +382,10 @@
   .stops-panel td { padding: 3px 8px 3px 0; color: var(--ink-dim); border-bottom: none; }
   .stops-panel tr.final-stop td { color: var(--ink); font-weight: 600; }
   .stops-panel tr.delay-start td { background: rgba(209, 69, 58, 0.08); }
+  .stops-panel tr.comp-start td { background: rgba(232, 135, 47, 0.14); }
   .stops-panel tr.stop-inferred td { color: var(--ink-faint); font-style: italic; }
   .delay-flag { color: var(--red); font-weight: 600; font-size: 11px; }
+  .delay-flag.comp-flag { color: var(--amber-bright); }
   .stop-delay.mild { color: var(--amber-bright); }
   .stop-delay.severe { color: var(--red); font-weight: 600; }
 
@@ -580,6 +591,7 @@
   var allRows = payload.rows;
   var C = payload.constants;
   var CONNECT_RADIUS_M = C.connectRadiusM;
+  var MIN_DELAY_MIN = C.minDelayMin;
 
   function esc(s) {
     if (s === null || s === undefined) return '';
@@ -1088,8 +1100,23 @@
       var m = r.stops[i].delayMin;
       if (m !== null && m !== undefined && m > 1 && delayStartSeq === null) { delayStartSeq = r.stops[i].seq; }
     }
+    // Marks the stop where the delay first reached Skånetrafiken's own
+    // ≥20-min-at-final-destination trigger (COMPENSATION_RULES.md §2) --
+    // shown ONLY when the rule is fully, confirmably met (a real final-stop
+    // delay, not `delayApprox`'s guess from the largest mid-route delay).
+    // Requested by the user 2026-07-08 alongside the "only recommend a
+    // fully-confirmed claim" rule -- this is that same rule made visible on
+    // the journey itself, not just enforced in the pre-check logic.
+    var compensationSeq = null;
+    if (r.calc === 'eligible' && !r.delayApprox) {
+      for (var k = 0; k < r.stops.length; k++) {
+        var cm = r.stops[k].delayMin;
+        if (cm !== null && cm !== undefined && cm >= MIN_DELAY_MIN) { compensationSeq = r.stops[k].seq; break; }
+      }
+    }
     var rowsHtml = r.stops.map(function (s) {
       var isStart = delayStartSeq !== null && s.seq === delayStartSeq;
+      var isCompStart = compensationSeq !== null && s.seq === compensationSeq;
       // recorded === false means this station never got its own row in
       // `delays` (see config.MIN_DELAY_TO_RECORD_SEC) -- which itself is a
       // reliable signal it was under 5 min late, not "unknown". Shown as
@@ -1103,11 +1130,12 @@
         : (s.delayMin === null || s.delayMin === undefined)
           ? '–'
           : (s.delayMin > 0 ? '+' : '') + s.delayMin.toFixed(1) + ' min';
-      return '<tr class="' + (s.final ? 'final-stop' : '') + (isStart ? ' delay-start' : '') + (notRecorded ? ' stop-inferred' : '') + '">' +
+      return '<tr class="' + (s.final ? 'final-stop' : '') + (isStart ? ' delay-start' : '') + (isCompStart ? ' comp-start' : '') + (notRecorded ? ' stop-inferred' : '') + '">' +
         '<td class="num">' + (s.seq === null || s.seq === undefined ? '–' : s.seq) + '</td>' +
         '<td>' + esc(s.name || '–') +
           (s.final ? ' <span class="hint">(final stop)</span>' : '') +
           (isStart ? ' <span class="delay-flag">⚡ delay begins here</span>' : '') +
+          (isCompStart ? ' <span class="delay-flag comp-flag">🎯 compensation threshold reached (≥' + MIN_DELAY_MIN + ' min)</span>' : '') +
           (s.final ? ' <span class="delay-flag">🏁 final delay: ' + (s.delayMin === null || s.delayMin === undefined ? 'not confirmed' : ((s.delayMin > 0 ? '+' : '') + s.delayMin.toFixed(1) + ' min')) + '</span>' : '') +
         '</td>' +
         '<td class="num">' + esc(s.schedTime || '–') + '</td>' +
@@ -1140,6 +1168,9 @@
     var selectHtml = '<label class="leg-select">' +
       '<input type="checkbox" class="leg-check" data-key="' + esc(key) + '"' + checked + '>' +
       '<span class="line-badge">' + esc(r.line) + '</span>' +
+      (r.tripNumber
+        ? '<span class="trip-num" title="Skånetrafiken\'s own app may show this same run under a different number partway through (e.g. Pågatåg ' + esc(r.tripNumber) + ' continuing as an Öresundståg number) if the operator branding changes mid-route — no physical transfer happens, but the printed/train number can differ from this one further along. Check the stop-by-stop detail below and match against the app by departure time/track, not by number alone.">#' + esc(r.tripNumber) + ' ⓘ</span>'
+        : '') +
       '<span class="leg-route">' + esc(r.originName || '?') + '<span class="dest-arrow">→</span>' + esc(r.dest || '?') + '</span>' +
       '<span class="leg-time num">' + fmtTime(r.originTimeIso) + '–' + fmtTime(r.destTimeIso) + '</span>' +
       tier +
@@ -1236,10 +1267,20 @@
   // The default suggestion is each day's top-ranked chain — same
   // reasonability-then-value ordering used for display (compareChains), so
   // what's pre-checked always matches what's shown first.
+  //
+  // Only legs where the compensation rule is FULLY, confirmably met get
+  // auto-checked -- a cancelled leg or a delayApprox leg (final stop never
+  // captured, eligibility guessed from the largest mid-route delay instead
+  // of the actual delay "at your final destination", per
+  // COMPENSATION_RULES.md §2) still appears in the chain as part of the
+  // day's travel story, but isn't pre-recommended as a claim to file.
+  // Requested explicitly by the user 2026-07-08: never recommend a claim
+  // on an approximation, only on a fully-applying rule.
+  function ruleFullyApplies(r) { return r.calc === 'eligible' && !r.delayApprox; }
   var suggested = {};
   Object.keys(dayChains).forEach(function (d) {
     var best = dayChains[d].slice().sort(compareChains)[0];
-    if (best) best.forEach(function (r) { suggested[rowKey(r)] = true; });
+    if (best) best.forEach(function (r) { if (ruleFullyApplies(r)) suggested[rowKey(r)] = true; });
   });
 
   var selected = {};
@@ -1430,6 +1471,7 @@
       var filedViaHtml = '<span class="hint">' + (t.claimedDigitally ? 'Filed digitally' : 'Mailed') + '</span>';
       return '<div class="filed-row">' +
         '<span class="line-badge">' + esc(r.line) + '</span>' +
+        '<span class="trip-num">' + (r.tripNumber ? '#' + esc(r.tripNumber) : '') + '</span>' +
         '<span class="num">' + fmtDate(r.date) + '</span>' +
         '<span>' + esc(r.originName || '?') + '<span class="dest-arrow">→</span>' + esc(r.dest || '?') + '</span>' +
         '<span>' + esc(compLabel) + ' · ' + esc(payoutLabel) + '</span>' +
