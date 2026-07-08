@@ -112,7 +112,7 @@ def _gtfs_time_to_local_dt(time_str, service_date_str):
     return (base + timedelta(hours=h, minutes=m, seconds=s)).replace(tzinfo=config.LOCAL_TZ)
 
 
-def merge_full_schedule(rows, full_schedule):
+def merge_full_schedule(rows, full_schedule, stops):
     """Replaces each row's sparse, delay-only `stops` list (only stations
     where scan.py actually wrote a row -- see config.MIN_DELAY_TO_RECORD_SEC)
     with the complete scheduled journey: every station from the static
@@ -120,8 +120,17 @@ def merge_full_schedule(rows, full_schedule):
     have one, and the scheduled time standing in for "on time, not
     specifically recorded" everywhere else. Matched by stop_sequence, which
     both the static timetable and `delays` key on (not stop_id -- a
-    circular/loop route can revisit the same stop_id twice in one trip)."""
+    circular/loop route can revisit the same stop_id twice in one trip).
+
+    Also stamps every stop (live and inferred alike) with lat/lon from the
+    static `stops` lookup, so the browser can draw the full route line on a
+    map -- the live-recorded rows only ever carried a name/time, never
+    coordinates, since scan.py has no reason to look those up itself."""
     for r in rows:
+        for s in (r.get("stops") or []):
+            meta = stops.get(s.get("stopId"), {})
+            s["lat"] = meta.get("lat")
+            s["lon"] = meta.get("lon")
         schedule = full_schedule.get(r["trip"])
         if not schedule:
             continue  # no static schedule found for this trip_id -- leave the sparse live list as-is
@@ -133,11 +142,13 @@ def merge_full_schedule(rows, full_schedule):
                 merged.append(live)
                 continue
             sched_dt = _gtfs_time_to_local_dt(dep_str or arr_str, r["date"])
+            meta = stops.get(stop_id, {})
             merged.append({
                 "seq": seq, "stopId": stop_id, "name": stop_name, "final": False, "relationship": None,
                 "delayMin": None, "recorded": False,
                 "schedTime": fmt_time(sched_dt), "actTime": None,
                 "schedTimeIso": sched_dt.isoformat() if sched_dt else None, "actTimeIso": None,
+                "lat": meta.get("lat"), "lon": meta.get("lon"),
             })
         r["stops"] = merged
     return rows
@@ -203,10 +214,10 @@ def main():
         cur.close()
         conn.close()
 
+    stops, trip_endpoints = load_static_lookups()
     comp_rows = compute_compensation(rows)
     full_schedule = load_full_stop_schedule([r["trip"] for r in comp_rows])
-    comp_rows = merge_full_schedule(comp_rows, full_schedule)
-    stops, trip_endpoints = load_static_lookups()
+    comp_rows = merge_full_schedule(comp_rows, full_schedule, stops)
     claim_rows = enrich_with_endpoints(comp_rows, stops, trip_endpoints)
 
     with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Skånetrafiken – Reasonable Claim Chains</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
 <style>
   :root {
     --bg: #dfe6ec;
@@ -351,6 +352,13 @@
     border-radius: 3px;
     font-size: 11.5px;
   }
+  .stops-map {
+    width: 100%;
+    height: 260px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    margin-bottom: 8px;
+  }
   .stops-panel table { width: 100%; border-collapse: collapse; }
   .stops-panel th {
     text-align: left;
@@ -564,6 +572,7 @@
 </div>
 
 <script type="application/json" id="raw-data">__DATA_JSON__</script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
 <script>
 (function () {
@@ -1006,6 +1015,60 @@
 
   var expandedLegs = new Set();  // keys "trip|date", survives re-renders
 
+  // Every renderAll() rebuilds the whole DOM via innerHTML, which tears down
+  // any Leaflet map instances along with the nodes they were bound to --
+  // Leaflet has no way to "reattach" to a fresh element, so each render
+  // discards and reinitializes any maps for still-expanded panels rather
+  // than trying to keep instances alive across a DOM replace.
+  var leafletMaps = {};
+  function stopsMapId(key) { return 'stopsmap-' + key.replace(/[^a-zA-Z0-9]/g, '_'); }
+
+  function stopMarkerColor(s, isEndpoint) {
+    if (isEndpoint) return '#182430';
+    if (s.recorded === false) return '#1f9d55';
+    if (s.delayMin === null || s.delayMin === undefined) return '#94a3b3';
+    if (s.delayMin >= 5) return '#d1453a';
+    if (s.delayMin > 0.5) return '#e8872f';
+    return '#1f9d55';
+  }
+
+  function initStopMaps() {
+    Object.keys(leafletMaps).forEach(function (k) {
+      if (!expandedLegs.has(k)) { leafletMaps[k].remove(); delete leafletMaps[k]; }
+    });
+    expandedLegs.forEach(function (key) {
+      var r = rowsByKey[key];
+      if (!r) return;
+      var el = document.getElementById(stopsMapId(key));
+      if (!el) return;  // no map container rendered for this leg (fewer than 2 geolocated stops)
+      if (leafletMaps[key]) { leafletMaps[key].remove(); delete leafletMaps[key]; }
+      var pts = (r.stops || []).filter(function (s) { return s.lat != null && s.lon != null; });
+      if (pts.length < 2) return;
+      var map = L.map(el, { scrollWheelZoom: false });
+      leafletMaps[key] = map;
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        maxZoom: 18,
+      }).addTo(map);
+      var latlngs = pts.map(function (s) { return [s.lat, s.lon]; });
+      L.polyline(latlngs, { color: '#c2660f', weight: 4, opacity: 0.85 }).addTo(map);
+      pts.forEach(function (s, i) {
+        var isEndpoint = i === 0 || i === pts.length - 1 || s.final;
+        var delayLabel = s.recorded === false
+          ? 'on time'
+          : (s.delayMin === null || s.delayMin === undefined ? 'not recorded' : (s.delayMin > 0 ? '+' : '') + s.delayMin.toFixed(1) + ' min');
+        L.circleMarker([s.lat, s.lon], {
+          radius: isEndpoint ? 7 : 5,
+          color: '#fff',
+          weight: 1.5,
+          fillColor: stopMarkerColor(s, isEndpoint),
+          fillOpacity: 1,
+        }).addTo(map).bindTooltip(esc(s.name || '?') + ' · ' + delayLabel, { direction: 'top' });
+      });
+      map.fitBounds(latlngs, { padding: [24, 24] });
+    });
+  }
+
   function stopDelayClass(m) {
     if (m === null || m === undefined) return '';
     if (m >= 5) return 'severe';
@@ -1052,7 +1115,11 @@
         '<td class="num stop-delay ' + (notRecorded ? '' : stopDelayClass(s.delayMin)) + '">' + delayText + '</td>' +
         '</tr>';
     }).join('');
-    return '<div class="stops-panel"><table><thead><tr>' +
+    var geolocatedCount = r.stops.filter(function (s) { return s.lat != null && s.lon != null; }).length;
+    var mapHtml = geolocatedCount >= 2
+      ? '<div class="stops-map" id="' + stopsMapId(rowKey(r)) + '"></div>'
+      : '';
+    return '<div class="stops-panel">' + mapHtml + '<table><thead><tr>' +
       '<th>Seq</th><th>Stop</th><th>Sched</th><th>Actual</th><th>Delay</th>' +
       '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div>';
   }
@@ -1373,7 +1440,7 @@
     }).join('');
   }
 
-  function renderAll() { renderChainDays(); renderMyClaims(); renderCheckedOut(); renderAlreadyFiled(); }
+  function renderAll() { renderChainDays(); renderMyClaims(); renderCheckedOut(); renderAlreadyFiled(); initStopMaps(); }
 
   document.addEventListener('change', function (e) {
     if (e.target.classList.contains('leg-check')) {

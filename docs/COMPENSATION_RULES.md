@@ -720,6 +720,17 @@ not "unknown" — because the absence of a row is itself a reliable signal
 under this policy (anything ≥5 min would have been recorded), not a gap
 in knowledge.
 
-**Not built:** an interactive map of the route (as seen in the
-screenshots). The station list with scheduled + actual times was the
-core ask; the map is a larger, separate addition if wanted later.
+**Interactive route map (added 2026-07-08).** Each expanded stops-panel
+also renders a Leaflet map (OpenStreetMap tiles, loaded from a CDN — no
+API key, no additional Trafiklab calls) with a polyline through every
+geolocated stop and a marker per station: dark for the two endpoints,
+green/amber/red for intermediate stops scaled by that stop's delay (green
+also covers `recorded: false` "on time" stops), with a hover tooltip
+showing the station name and its delay. Coordinates ride along on each
+stop object (`lat`/`lon`, from `static_index.py`'s `stops` table — the
+same source `enrich_with_endpoints()` already used for origin/destination)
+rather than a second lookup. Maps are (re)created in `initStopMaps()`,
+called at the end of every `renderAll()`, since a full innerHTML re-render
+tears down whatever DOM node a previous Leaflet instance was bound to —
+there's no way to "reattach" a live map, so a still-expanded panel just
+gets a fresh one each time.
