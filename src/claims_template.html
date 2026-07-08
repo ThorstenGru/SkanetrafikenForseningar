@@ -402,14 +402,14 @@
     color: var(--ink);
   }
 
-  .mail-btn {
+  .mail-btn, .digital-btn {
     padding: 4px 10px !important;
     font-size: 10.5px !important;
     background: var(--green-dim) !important;
     border-color: var(--green) !important;
     color: var(--green) !important;
   }
-  .mail-btn:hover { background: var(--green) !important; color: #fff !important; }
+  .mail-btn:hover, .digital-btn:hover { background: var(--green) !important; color: #fff !important; }
 
   .gap-warning {
     background: var(--red-dim);
@@ -501,7 +501,7 @@
   <section id="checkedOutSection" style="display:none;">
     <div class="section-head">
       <h2>Checked out — preparing your forms</h2>
-      <span class="hint">Pick compensation type + payout for each, then Print Claim to fill and print the official form. Once it's signed and in the mail, confirm below — the claim number goes in once Skånetrafiken responds. <strong>Two things are never filled in and always need your pen: Personnummer, and the signature.</strong></span>
+      <span class="hint">Pick compensation type + payout for each, then either Print Claim to fill and mail the official form, or Claimed Digitally if you filed it directly through Skånetrafiken instead — the claim number goes in once they respond either way. <strong>Two things are never filled in and always need your pen: Personnummer, and the signature.</strong></span>
     </div>
     <div class="stats" id="checkedOutStats"></div>
     <div id="checkedOutList"></div>
@@ -874,12 +874,12 @@
   // archived (mailed=true — signed and sent). Claim number is only
   // meaningful once Skånetrafiken has actually responded, i.e. after
   // mailing. See COMPENSATION_RULES.md §15/§16.
-  var TRACKING_DEFAULTS = { claimed: false, claimNumber: '', compensationType: '', payoutMethod: '', mailed: false, printedAt: null, filledPdfPath: '' };
+  var TRACKING_DEFAULTS = { claimed: false, claimNumber: '', compensationType: '', payoutMethod: '', mailed: false, printedAt: null, filledPdfPath: '', claimedDigitally: false };
   function trackingFor(key) { return tracking[key] || TRACKING_DEFAULTS; }
 
   function loadTracking() {
     if (!TRACKING_URL) { setStatus('Supabase not configured for this build', 'err'); return Promise.resolve(); }
-    return fetch(TRACKING_URL + '?select=trip_id,trip_start_date,claimed,claim_number,compensation_type,payout_method,mailed,printed_at,filled_pdf_path', { headers: sbHeaders(false) })
+    return fetch(TRACKING_URL + '?select=trip_id,trip_start_date,claimed,claim_number,compensation_type,payout_method,mailed,printed_at,filled_pdf_path,claimed_digitally', { headers: sbHeaders(false) })
       .then(function (resp) {
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         return resp.json();
@@ -895,6 +895,7 @@
             mailed: !!row.mailed,
             printedAt: row.printed_at || null,
             filledPdfPath: row.filled_pdf_path || '',
+            claimedDigitally: !!row.claimed_digitally,
           };
         });
         setStatus('synced with Supabase', 'ok');
@@ -933,6 +934,8 @@
         mailed_at: patch.mailed ? new Date().toISOString() : undefined,
         printed_at: patch.printedAt || undefined,
         filled_pdf_path: patch.filledPdfPath || undefined,
+        claimed_digitally: tracking[key].claimedDigitally,
+        claimed_digitally_at: patch.claimedDigitally ? new Date().toISOString() : undefined,
       }]),
     }).then(function (resp) {
       if (!resp.ok) return resp.text().then(function (t) { throw new Error('HTTP ' + resp.status + ': ' + t); });
@@ -1078,16 +1081,26 @@
       // form gets printed & signed long before it's mailed, and a claim
       // number only exists once Skånetrafiken has actually responded —
       // conflating all three into one "claimed" checkbox hid that order.
-      var printBtnHtml = (opts.mailButton && t.claimed && t.compensationType && t.payoutMethod && !t.printedAt)
+      var readyToFile = t.claimed && t.compensationType && t.payoutMethod;
+      var alreadyFiled = t.mailed || t.claimedDigitally;
+      var printBtnHtml = (opts.mailButton && readyToFile && !t.printedAt && !alreadyFiled)
         ? '<button type="button" class="link-btn print-btn" data-key="' + esc(key) + '">Print Claim</button>'
         : '';
-      var printedHintHtml = (opts.mailButton && t.printedAt && !t.mailed)
+      var printedHintHtml = (opts.mailButton && t.printedAt && !alreadyFiled)
         ? '<span class="hint">Printed ' + esc(new Date(t.printedAt).toLocaleString('sv-SE')) + '</span>'
         : '';
-      var mailBtnHtml = (opts.mailButton && t.claimed && t.printedAt && !t.mailed)
+      var mailBtnHtml = (opts.mailButton && t.claimed && t.printedAt && !alreadyFiled)
         ? '<button type="button" class="link-btn mail-btn" data-key="' + esc(key) + '">Mark sent in</button>'
         : '';
-      var claimNumberHtml = t.mailed
+      // Alternative to the print-and-mail path: Skånetrafiken also accepts
+      // some claims filed straight through their own site/app, with no
+      // paper form at all. Available any time before the claim is
+      // considered filed (whether or not a paper copy was also printed --
+      // some people print for their own records but still file digitally).
+      var digitalBtnHtml = (opts.mailButton && readyToFile && !alreadyFiled)
+        ? '<button type="button" class="link-btn digital-btn" data-key="' + esc(key) + '">Claimed Digitally</button>'
+        : '';
+      var claimNumberHtml = alreadyFiled
         ? '<input type="text" class="claim-number-input" data-key="' + esc(key) + '" placeholder="Skånetrafiken claim #" value="' + esc(t.claimNumber) + '">'
         : '';
       trackHtml = '<span class="claim-track">' +
@@ -1096,6 +1109,7 @@
         printBtnHtml +
         printedHintHtml +
         mailBtnHtml +
+        digitalBtnHtml +
         claimNumberHtml +
         '</span>';
     }
@@ -1277,7 +1291,7 @@
   // claims still shows the gap warning instead of silently losing it —
   // "Your claim cart" and "Suggested reasonable chains" both do this too.
   function renderCheckedOut() {
-    var out = allRows.filter(function (r) { var t = trackingFor(rowKey(r)); return t.claimed && !t.mailed; });
+    var out = allRows.filter(function (r) { var t = trackingFor(rowKey(r)); return t.claimed && !t.mailed && !t.claimedDigitally; });
     var section = document.getElementById('checkedOutSection');
     if (!out.length) { section.style.display = 'none'; return; }
     section.style.display = '';
@@ -1321,10 +1335,10 @@
   }
 
   // Stage 3, the archive: prevents re-filing by staying visible regardless
-  // of cart/day-filter state — only trips actually confirmed mailed land
-  // here, not merely "claim started".
+  // of cart/day-filter state — only trips actually confirmed filed (mailed
+  // or claimed digitally) land here, not merely "claim started".
   function renderAlreadyFiled() {
-    var filed = allRows.filter(function (r) { return trackingFor(rowKey(r)).mailed; });
+    var filed = allRows.filter(function (r) { var t = trackingFor(rowKey(r)); return t.mailed || t.claimedDigitally; });
     var section = document.getElementById('alreadyFiledSection');
     if (!filed.length) { section.style.display = 'none'; return; }
     section.style.display = '';
@@ -1335,11 +1349,13 @@
       var downloadHtml = t.filledPdfPath
         ? '<button type="button" class="link-btn download-btn" data-path="' + esc(t.filledPdfPath) + '">Download filled form</button>'
         : '';
+      var filedViaHtml = '<span class="hint">' + (t.claimedDigitally ? 'Filed digitally' : 'Mailed') + '</span>';
       return '<div class="filed-row">' +
         '<span class="line-badge">' + esc(r.line) + '</span>' +
         '<span class="num">' + fmtDate(r.date) + '</span>' +
         '<span>' + esc(r.originName || '?') + '<span class="dest-arrow">→</span>' + esc(r.dest || '?') + '</span>' +
         '<span>' + esc(compLabel) + ' · ' + esc(payoutLabel) + '</span>' +
+        filedViaHtml +
         '<span class="claim-num">' + (t.claimNumber ? 'Claim #' + esc(t.claimNumber) : 'no claim # recorded yet') + '</span>' +
         downloadHtml +
         '</div>';
@@ -1409,6 +1425,18 @@
       // the literal question the user wanted asked before doing that.
       if (!window.confirm('Signed and in the mail?')) return;
       saveTrackingRow(rowsByKey[mkey], { mailed: true });
+      renderCheckedOut();
+      renderAlreadyFiled();
+      return;
+    }
+    var digitalBtn = e.target.closest('.digital-btn');
+    if (digitalBtn) {
+      var dkey = digitalBtn.dataset.key;
+      // Same one-way-door gate as "Mark sent in" -- this is the other
+      // action that archives a claim, just via Skånetrafiken's own
+      // digital channel instead of a mailed paper form.
+      if (!window.confirm('Filed this claim digitally through Skånetrafiken directly (not by mail)?')) return;
+      saveTrackingRow(rowsByKey[dkey], { claimedDigitally: true });
       renderCheckedOut();
       renderAlreadyFiled();
     }

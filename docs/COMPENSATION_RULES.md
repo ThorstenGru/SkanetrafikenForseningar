@@ -668,3 +668,30 @@ compensation eligibility (which only ever looks at the final stop),
 so that trade-off was deliberately not taken. claims.html's per-stop
 drill-down also now flags the final stop's own delay value directly
 (🏁), not just where the delay began (⚡).
+
+## 18. Claimed Digitally — a second filing path, 2026-07-08
+
+Requested by the user: Skånetrafiken also accepts some claims filed
+directly through their own site/app, with no paper form at all. Print
+Claim → mail was the only path claims.html supported; "Claimed
+Digitally" is now a parallel alternative, not a replacement.
+
+**Deliberately a separate flag, not an overload of `mailed`.**
+`claim_tracking.claimed_digitally`/`claimed_digitally_at`
+(`src/migrations/011_claimed_digitally.sql`) exist alongside
+`mailed`/`mailed_at` rather than repurposing "mailed" to mean "filed,
+however" — `mailed` should keep meaning literally that. Anywhere the
+app previously asked "is this claim done" (`renderCheckedOut`'s filter,
+`renderAlreadyFiled`'s filter, the claim-number input's gate), the
+check is now `mailed OR claimedDigitally`.
+
+**Available independent of the print step.** The "Claimed Digitally"
+button appears any time a leg is checked out with both compensation
+type and payout method chosen, regardless of whether it's also been
+printed — someone might print a copy for their own paper trail but
+still file through Skånetrafiken's site, and that's a legitimate
+combination, not a contradiction. Same one-way confirmation gate as
+"Mark sent in" (`window.confirm`), since it's equally a one-way
+archiving action. The archived section now shows which path was used
+("Mailed" vs "Filed digitally") so that distinction isn't lost once a
+claim is archived.

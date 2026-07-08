@@ -157,8 +157,17 @@ including the RLS/passphrase model that gates writes.
 |---|---|
 | `trip_id`, `trip_start_date` | Same identity as `delays`/`trip_cancellations` — PK together. |
 | `claimed` | Boolean — "Claim started" checkbox on claims.html. |
-| `claim_number` | Free text — Skånetrafiken's own claim reference once filed. |
+| `claim_number` | Free text — Skånetrafiken's own claim reference once filed. Only shown/editable once `mailed` or `claimed_digitally` is true (§18). |
+| `compensation_type` | `prisavdrag` \| `taxi` \| `mileage` — added `002_claim_choices.sql`. Non-personal enum, safe under the openly-readable RLS policy. |
+| `payout_method` | `voucher_sms` \| `voucher_email` \| `cash` — added `002_claim_choices.sql`. Same non-personal reasoning. |
+| `mailed` / `mailed_at` | The paper-form path: printed, signed, and physically sent — added `003_claim_mailed.sql`. One-way (no UI to un-set it). |
+| `printed_at` / `filled_pdf_path` | Set when "Print Claim" fills the official PDF client-side and uploads it — added `007_claim_form_printing.sql`. `filled_pdf_path` points into the private `claim_forms` Storage bucket, gated by the same passphrase as writes here. See COMPENSATION_RULES.md §17. |
+| `claimed_digitally` / `claimed_digitally_at` | The alternative to print+mail: filed straight through Skånetrafiken's own site/app — added `011_claimed_digitally.sql`. Also one-way. See COMPENSATION_RULES.md §18. |
 | `updated_at` | Set by the table default; not currently read back anywhere. |
+
+A trip is considered archived/filed once `mailed OR claimed_digitally` is
+true — both are legitimate, mutually-exclusive-in-practice-but-not-
+enforced end states of the same lifecycle, not sequential stages.
 
 ## `data/static_index.sqlite` (local file, committed to git)
 
