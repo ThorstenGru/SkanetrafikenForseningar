@@ -1274,13 +1274,16 @@
   var dayChains = {};
   Object.keys(byDate).forEach(function (d) { dayChains[d] = buildChains(byDate[d]); });
 
-  // The default suggestion is each day's top-ranked chain — same
-  // reasonability-then-value ordering used for display (compareChains), so
-  // what's pre-checked always matches what's shown first.
+  // The suggestion is each day's top-ranked chain — same reasonability-
+  // then-value ordering used for display (compareChains), so what "Select
+  // suggested" checks always matches what's shown first. Not auto-checked
+  // into the cart on load (requested 2026-07-08) -- the user ticks legs
+  // themselves, or clicks "Select suggested" to opt into this set at once.
   //
-  // Only legs where the compensation rule is FULLY, confirmably met get
-  // auto-checked -- a cancelled leg or a delayApprox leg (final stop never
-  // captured, eligibility guessed from the largest mid-route delay instead
+  // Only legs where the compensation rule is FULLY, confirmably met are
+  // ever part of this suggestion -- a cancelled leg or a delayApprox leg
+  // (final stop never captured, eligibility guessed from the largest
+  // mid-route delay instead
   // of the actual delay "at your final destination", per
   // COMPENSATION_RULES.md §2) still appears in the chain as part of the
   // day's travel story, but isn't pre-recommended as a claim to file.
@@ -1301,8 +1304,13 @@
     if (best) best.forEach(function (r) { if (ruleFullyApplies(r)) suggested[rowKey(r)] = true; });
   });
 
+  // The cart starts empty -- `suggested` is still computed (used for the
+  // "Select suggested" button and to highlight the best chain), but nothing
+  // is auto-checked into it on load. Requested by the user 2026-07-08:
+  // client-side `selected` state was never persisted anyway (see
+  // COMPENSATION_RULES.md §15 -- this is deliberately not saved across
+  // reloads), so a clean cart just means not pre-populating it here.
   var selected = {};
-  Object.keys(suggested).forEach(function (k) { selected[k] = true; });
 
   var dayFilterEl = document.getElementById('dayFilter');
   populateDayFilter();
@@ -1313,7 +1321,7 @@
     { label: 'Eligible trips (network-wide)', value: eligible.length, sub: 'illustrative, not personal' },
     { label: 'Cancelled trips', value: cancelled.length, sub: 'break any chain through them' },
     { label: 'Days with multiple chains', value: daysWithGaps, sub: 'need a gap explained if combined', crit: daysWithGaps > 0 },
-    { label: 'Suggested chain legs', value: Object.keys(suggested).length, sub: 'longest chain per day, pre-checked below' },
+    { label: 'Suggested chain legs', value: Object.keys(suggested).length, sub: 'longest chain per day — tick to add, or use "Select suggested"' },
   ].map(function (s) {
     return '<div class="stat' + (s.crit ? ' crit' : '') + '"><div class="label">' + esc(s.label) + '</div>' +
       '<div class="value">' + s.value + '</div><div class="sub">' + esc(s.sub) + '</div></div>';
