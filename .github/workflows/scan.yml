@@ -58,6 +58,19 @@ jobs:
           FORCE_STATIC_REFRESH: ${{ github.event.inputs.force_static_refresh }}
         run: python src/scan.py
 
+      # Second, independent rail-delay source (docs/TRAFIKVERKET_INTEGRATION.md)
+      # -- ingestion only, never authoritative on its own (see
+      # src/trafikverket_merge.py's hard rule: this data can enrich or
+      # gap-fill, never override GTFS-RT). continue-on-error because this is
+      # optional infrastructure -- a Trafikverket outage or rate limit must
+      # not take down the main scan/build/deploy pipeline.
+      - name: Run Trafikverket scanner
+        continue-on-error: true
+        env:
+          TRAFIKVERKET_KEY: ${{ secrets.TRAFIKVERKET_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python src/scan_trafikverket.py
+
       - name: Commit static index (routes/stops cache, changes ~weekly)
         run: |
           git config user.name "github-actions[bot]"

@@ -572,7 +572,8 @@
         '<td class="num">' + esc(r.tripNumber || '–') + '</td>' +
         '<td>' + esc(r.dest || '–') + '</td>' +
         '<td class="num">' + fmtKm(r.distanceKm) + '</td>' +
-        '<td class="num">' + r.delayUsedMin.toFixed(1) + ' min' + (r.delayApprox ? ' <span class="chip approx">approx.</span>' : '') + '</td>' +
+        '<td class="num">' + r.delayUsedMin.toFixed(1) + ' min' + (r.delayApprox ? ' <span class="chip approx">approx.</span>' : '') +
+          (r.singleSourceOnly ? ' <span class="chip approx" title="Never appeared in Skånetrafiken\'s own realtime feed -- this delay is from Trafikverket\'s independent data only, not corroborated.">Trafikverket only</span>' : '') + '</td>' +
         '<td><span class="chip ' + tierClass(r) + '">' + r.deductionPct + '%</span></td>' +
         '<td><div class="option"><span class="cash">' + fmtSek(r.deductionCash) + ' cash</span><span class="voucher">' + fmtSek(r.deductionVoucher) + ' voucher</span></div></td>' +
         '<td>' + (r.carCash ? '<div class="option"><span class="cash">' + fmtSek(r.carCash) + ' cash</span><span class="voucher">' + fmtSek(r.carVoucher) + ' voucher</span></div>' : '<span class="hint">no distance data</span>') + '</td>' +

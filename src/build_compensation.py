@@ -32,6 +32,7 @@ from datetime import datetime, timedelta
 import config
 import db
 from build_dashboard import fetch_detail_rows
+from trafikverket_merge import merge_trafikverket
 
 TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "compensation_template.html")
 
@@ -107,6 +108,7 @@ def main():
     cur = conn.cursor()
     try:
         rows = fetch_detail_rows(cur, start_date, end_date, None)
+        rows = merge_trafikverket(rows, cur, start_date, end_date)
     finally:
         cur.close()
         conn.close()
