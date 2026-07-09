@@ -26,9 +26,9 @@ def load_trip_meta(static_conn):
         route_types[rid] = rt
     stops = dict(static_conn.execute("SELECT stop_id, stop_name FROM stops").fetchall())
     trip_meta = {}
-    for (trip_id, route_id, direction_id, trip_number, dest_stop_id, dest_stop_name,
+    for (trip_id, route_id, direction_id, trip_number, origin_stop_id, dest_stop_id, dest_stop_name,
          final_seq, distance_km, sommarticket_valid) in static_conn.execute(
-        """SELECT trip_id, route_id, direction_id, trip_number, destination_stop_id,
+        """SELECT trip_id, route_id, direction_id, trip_number, origin_stop_id, destination_stop_id,
                   destination_stop_name, final_stop_sequence, distance_km, sommarticket_valid
            FROM trip_meta"""
     ):
@@ -38,6 +38,16 @@ def load_trip_meta(static_conn):
             "vehicle_type": config.route_type_label(route_types.get(route_id)),
             "trip_number": trip_number or None,
             "direction_id": direction_id,
+            # origin_stop_id/destination_stop_id: added 2026-07-08 -- these
+            # were silently missing before (destination_stop_id was fetched
+            # from SQL but never put in the dict; origin_stop_id wasn't even
+            # selected), which made trafikverket_merge.py's
+            # meta.get("origin_stop_id")/meta.get("destination_stop_id")
+            # always None, which made its gap-fill's dest_sig lookup always
+            # fail -- the entire "fill trips GTFS-RT never saw" feature was
+            # silently inert since it shipped. Found by code review.
+            "origin_stop_id": origin_stop_id,
+            "destination_stop_id": dest_stop_id,
             "destination_stop_name": dest_stop_name,
             "final_stop_sequence": final_seq,
             "distance_km": distance_km,

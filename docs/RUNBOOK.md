@@ -29,10 +29,15 @@ was exposed in the same earlier conversation.
 `TRAFIKVERKET_KEY` — a separate registration from the `TRAFIKLAB_*` keys
 above, at `data.trafikverket.se` (not developer.trafiklab.se). Powers
 `src/scan_trafikverket.py`, the second rail-delay source described in
-[TRAFIKVERKET_INTEGRATION.md](TRAFIKVERKET_INTEGRATION.md) — not yet wired
-into any scheduled workflow. Rotate the same way as the Trafiklab keys:
-generate a new key under "Mina nycklar" at `data.trafikverket.se/mypage/systems`,
-then `gh secret set TRAFIKVERKET_KEY --body "NEW_KEY" -R ThorstenGru/SkanetrafikenForseningar`.
+[TRAFIKVERKET_INTEGRATION.md](TRAFIKVERKET_INTEGRATION.md). **Live since
+2026-07-08** — `scan.yml` runs it on the same `*/15 * * * *` cron as the
+main scan (as a `continue-on-error` step, since it's still optional
+infrastructure — see TRAFIKVERKET_INTEGRATION.md for what that means in
+practice). Corrected 2026-07-08: this used to say "not yet wired into any
+scheduled workflow," which stopped being true the same day it was written.
+Rotate the same way as the Trafiklab keys: generate a new key under "Mina
+nycklar" at `data.trafikverket.se/mypage/systems`, then
+`gh secret set TRAFIKVERKET_KEY --body "NEW_KEY" -R ThorstenGru/SkanetrafikenForseningar`.
 
 ## Run a manual scan
 
@@ -49,6 +54,13 @@ export TRAFIKLAB_STATIC_KEY=...
 export TRAFIKLAB_REALTIME_KEY=...
 export DATABASE_URL=...   # Postgres connection string, see below
 python src/scan.py
+
+# Second, independent rail-delay source (optional -- degrades gracefully
+# if skipped, see TRAFIKVERKET_INTEGRATION.md). scan.yml runs this as its
+# own step in the same job; added here 2026-07-08 since this section
+# previously only listed the TRAFIKLAB_* keys even after that changed.
+export TRAFIKVERKET_KEY=...
+python src/scan_trafikverket.py
 ```
 
 ## Generate a dashboard
@@ -188,6 +200,8 @@ sqlite> SELECT COUNT(*) FROM trip_meta;
 | All `route_short_name` shows `okand` | `trip_id` lookup against the static index is missing | Static index may be stale/out of sync — delete `data/static_index.sqlite` and rerun (costs 1 static request) |
 | `ON CONFLICT DO UPDATE command cannot affect row a second time` | A batch contains two rows with the same primary key (e.g. malformed feed entities with an empty `trip_id`) | Already guarded in `scan.py` (skips empty `trip_id`, dedupes defensively before each batch) — if it recurs, inspect the feed for a new edge case |
 | Workflow commits nothing most runs even though scans succeeded | Normal — `data/static_index.sqlite` only changes ~weekly; delay data lives in Postgres, not git | No action needed |
+| GH Actions job's "Run Trafikverket scanner" step shows a red X but the overall job/run is still green | Expected — that step is `continue-on-error: true` on purpose (optional infrastructure, must not take down the main pipeline). It does NOT alert anywhere automatically (found by code review 2026-07-08 — no monitoring surface currently checks this specific step) | Check the step's own log directly for the real error (usually `TRAFIKVERKET_KEY` invalid/unset, or a Trafikverket API schema drift — see TRAFIKVERKET_INTEGRATION.md's own `VERIFY:` notes) |
+| `train_announcements` stays empty / `location_signature_map` has 0 rows | The one-off `python src/build_location_signature_map.py` import was never run after the migration | Run it once (needs `TRAFIKVERKET_KEY` + `DATABASE_URL` locally, or via `supabase db query`) — see TRAFIKVERKET_INTEGRATION.md |
 | `missing_trips` shows a huge number for a day the scanner wasn't running yet | The coverage check has a guard against checking dates before the scanner's first run, but only from the point that guard was added | Truncate `missing_trips` for that date range if it predates the guard |
 | Writes fail with `psycopg2.errors.DiskFull` / `No space left on device`, or reads intermittently fail with `QueryCanceled: canceling statement due to statement timeout` or `server didn't return client encoding` | Supabase Free Plan's 0.5 GB database-size quota exceeded (2026-07-07 incident: a multi-day backfill at pre-`MIN_DELAY_TO_RECORD_SEC` density pushed the DB to 947 MB/202% of quota — a project restart fixes the "unhealthy" symptom but never the underlying quota, since restarts don't free space) | Run `db_usage_report.yml` first to see what's actually using space. If it's `delays` noise, run `cleanup_delay_noise.yml` (deletes sub-`MIN_DELAY_TO_RECORD_SEC` rows, then `VACUUM FULL`s the table — a plain `DELETE` alone doesn't shrink the file). Check status.html — a plain `SELECT 1` succeeds even when the DB can't accept writes at all, so read-only reachability isn't a reliable health signal on its own. |
 | No scheduled (`schedule:`) workflow run for hours despite the workflow being active and nothing queued | Either two workflows sharing one `concurrency:` group (a long backfill run silently starves every scan cron behind it — fixed 2026-07-07 by splitting scan/backfill into separate groups), or GitHub's own scheduler delaying triggers under load (no fix available, platform behavior) | `gh run list --workflow=<name>.yml` to check for a gap; if it's a concurrency conflict, verify the group names in the relevant workflow YAMLs actually differ |

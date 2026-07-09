@@ -31,29 +31,24 @@ import config
 from scan import load_trip_meta
 
 
-def _load_static_trip_number_index():
-    """trip_number (str) -> list of (trip_id, meta) from the static index,
-    the same trip_meta scan.py already builds -- reused here rather than
-    re-deriving it, so this module's notion of a trip's route/destination/
-    distance/sommarticket_valid always matches what scan.py itself uses."""
+def _load_static_data():
+    """(trip_number_index, stop_names) from a single pass over the static
+    index -- trip_number (str) -> list of (trip_id, meta), and stop_id ->
+    stop_name. Previously two separate functions each opening their own
+    sqlite3 connection to the same file; load_trip_meta() already returns
+    the stop-name dict as its second value, so the second connection was
+    pure duplicate I/O for data already in hand (found by code review
+    2026-07-08)."""
     conn = sqlite3.connect(config.STATIC_INDEX_PATH)
     try:
-        trip_meta, _stops = load_trip_meta(conn)
+        trip_meta, stops = load_trip_meta(conn)
     finally:
         conn.close()
     index = {}
     for trip_id, meta in trip_meta.items():
         if meta.get("trip_number"):
             index.setdefault(str(meta["trip_number"]), []).append((trip_id, meta))
-    return index
-
-
-def _load_static_stop_names():
-    conn = sqlite3.connect(config.STATIC_INDEX_PATH)
-    try:
-        return dict(conn.execute("SELECT stop_id, stop_name FROM stops"))
-    finally:
-        conn.close()
+    return index, stops
 
 
 def _load_location_signature_map(cur):
@@ -85,22 +80,34 @@ def _existing_gtfs_keys(cur, start_date, end_date):
 
 def _fetch_announcement_groups(cur, start_date, end_date):
     """(advertised_train_number, traffic_date) -> list of raw announcement
-    rows (as dicts) for that physical trip."""
+    rows (as dicts) for that physical trip. Called once per
+    merge_trafikverket() invocation and shared between enrich_reasons() and
+    build_gapfill_rows() -- both used to independently re-run this exact
+    query, doubling the round-trip for no reason (found by code review
+    2026-07-08).
+
+    Does NOT select the `canceled` column -- fetched in an earlier version
+    but never actually read by either caller (the ambiguous-cancellation
+    guard is done purely via _delay_min() returning None when there's no
+    actual_at/estimated_at, not by checking this flag directly). Leaving it
+    out avoids both the unused-data smell and any temptation to read it
+    naively elsewhere -- see this module's own docstring on why a lone
+    Canceled=true is not reliable."""
     cur.execute(
         """SELECT advertised_train_number, traffic_date, location_signature, activity_type,
                   advertised_time_at_location, estimated_time_at_location, time_at_location,
-                  canceled, deviation_text
+                  deviation_text
            FROM train_announcements
            WHERE traffic_date BETWEEN %s AND %s""",
         (start_date, end_date),
     )
     groups = {}
     for (train_number, traffic_date, sig, activity, advertised_at, estimated_at, actual_at,
-         canceled, deviation_text) in cur.fetchall():
+         deviation_text) in cur.fetchall():
         groups.setdefault((train_number, traffic_date), []).append({
             "location_signature": sig, "activity_type": activity,
             "advertised_at": advertised_at, "estimated_at": estimated_at, "actual_at": actual_at,
-            "canceled": canceled, "deviation_text": deviation_text,
+            "deviation_text": deviation_text,
         })
     return groups
 
@@ -122,18 +129,21 @@ def _fmt_time(dt):
     return dt.astimezone(config.LOCAL_TZ).strftime("%H:%M")
 
 
-def build_gapfill_rows(cur, start_date, end_date):
+def build_gapfill_rows(cur, start_date, end_date, trip_number_index, stop_names, groups):
     """Rows for trips GTFS-RT never saw at all, built ONLY where Trafikverket
     gives an unambiguous real delay at the trip's own final stop. Returns
     (rows, skipped_count) -- skipped_count is trips that matched a known
     Skåne train number but couldn't be confidently resolved (no location
     crosswalk hit, or the ambiguous Canceled-with-no-time pattern), logged
-    rather than silently dropped so the gap this module leaves is visible."""
-    trip_number_index = _load_static_trip_number_index()
-    stop_names = _load_static_stop_names()
+    rather than silently dropped so the gap this module leaves is visible.
+
+    trip_number_index/stop_names/groups are loaded once by the caller
+    (merge_trafikverket) and passed in -- this used to reload all three
+    itself, duplicating enrich_reasons()'s identical `groups` query and
+    each of its own two static-index loads within a single merge call
+    (found by code review 2026-07-08)."""
     _sig_to_stop, stop_to_sig = _load_location_signature_map(cur)
     existing_keys = _existing_gtfs_keys(cur, start_date, end_date)
-    groups = _fetch_announcement_groups(cur, start_date, end_date)
 
     rows = []
     skipped = 0
@@ -205,7 +215,13 @@ def build_gapfill_rows(cur, start_date, end_date):
                 "trip": trip_id, "date": traffic_date.strftime("%Y%m%d"), "line": meta["route_short_name"],
                 "vehicleType": meta.get("vehicle_type") or "UNKNOWN", "tripNumber": train_number,
                 "dest": meta.get("destination_stop_name"), "distanceKm": meta.get("distance_km"),
-                "status": "DELAYED" if final_delay > 0.5 else ("EARLY" if final_delay < -0.5 else "ON_TIME"),
+                # Thresholds must match build_dashboard.classify_trip()'s
+                # >60s/<-60s exactly (i.e. >1.0/<-1.0 minutes here) -- found
+                # by code review 2026-07-08 using >0.5/<-0.5, which gave a
+                # GTFS-RT-sourced trip and a Trafikverket-sourced trip
+                # different DELAYED/ON_TIME verdicts for the same delay
+                # length purely because of which source happened to report it.
+                "status": "DELAYED" if final_delay > 1.0 else ("EARLY" if final_delay < -1.0 else "ON_TIME"),
                 "finalDelayMin": final_delay,
                 "maxDelayMin": max(final_delay, origin_delay) if origin_delay is not None else final_delay,
                 "reason": "Trafikverket: " + "; ".join(deviations) if deviations else None,
@@ -225,12 +241,12 @@ def build_gapfill_rows(cur, start_date, end_date):
     return rows, skipped
 
 
-def enrich_reasons(rows, cur, start_date, end_date):
+def enrich_reasons(rows, groups):
     """Fills in `reason` from Trafikverket's Deviation text for rows that
     already have GTFS-RT data but no reason of their own (best_reason() in
     build_dashboard.py came up empty). Never touches delay/status/calc --
-    text only."""
-    groups = _fetch_announcement_groups(cur, start_date, end_date)
+    text only. `groups` is loaded once by the caller (merge_trafikverket)
+    and shared with build_gapfill_rows() -- see its own docstring."""
     by_key = {}
     for (train_number, traffic_date), announcements in groups.items():
         deviations = sorted(set(a["deviation_text"] for a in announcements if a["deviation_text"]))
@@ -259,8 +275,10 @@ def merge_trafikverket(rows, cur, start_date, end_date):
     invisible, but it must never be fatal to the page build. See
     docs/TRAFIKVERKET_INTEGRATION.md."""
     try:
-        rows = enrich_reasons(rows, cur, start_date, end_date)
-        gapfill_rows, skipped = build_gapfill_rows(cur, start_date, end_date)
+        trip_number_index, stop_names = _load_static_data()
+        groups = _fetch_announcement_groups(cur, start_date, end_date)
+        rows = enrich_reasons(rows, groups)
+        gapfill_rows, skipped = build_gapfill_rows(cur, start_date, end_date, trip_number_index, stop_names, groups)
     except Exception as exc:  # noqa: BLE001 -- intentional, see docstring
         import traceback
         traceback.print_exc()

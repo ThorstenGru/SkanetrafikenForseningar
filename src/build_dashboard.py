@@ -82,6 +82,30 @@ def _alert_active_on(start, end, day_start, day_end):
     return True
 
 
+def _trip_time_window(stops, day_start):
+    """The real window this specific trip occurrence actually ran in,
+    padded 2h either side -- anchored to this trip's OWN recorded stop
+    times rather than a blanket calendar-day guess. Found by code review
+    2026-07-08: the original fixed +36h day_end overlapped the *next*
+    calendar day's own window by 12h (day D's window ran to D+1 12:00,
+    while D+1's own window started at D+1 00:00), which could reattach a
+    same-recurring-trip_id alert from the wrong day right back onto this
+    one -- the exact class of bug the date-scoping fix was meant to kill.
+    Falls back to a tightened calendar heuristic (day_start to +8h, covers
+    a last train arriving in the small hours) only when this trip has no
+    recorded per-stop times at all -- e.g. a fully cancelled trip, which
+    never gets per-stop rows (see trip_cancellations handling below)."""
+    timestamps = []
+    for s in stops:
+        for key in ("actTimeIso", "schedTimeIso"):
+            v = s.get(key)
+            if v:
+                timestamps.append(datetime.fromisoformat(v))
+    if timestamps:
+        return min(timestamps) - timedelta(hours=2), max(timestamps) + timedelta(hours=2)
+    return day_start, day_start + timedelta(hours=8)
+
+
 def best_reason(lookups, trip_id, route_id, stop_id, day_start, day_end):
     by_trip, by_route, by_stop = lookups
     for d, key in ((by_trip, trip_id), (by_stop, stop_id), (by_route, route_id)):
@@ -247,15 +271,8 @@ def fetch_detail_rows(cur, start_date, end_date, single_date):
 
     out = []
     for (_trip_id_key, trip_date), t in trips.items():
-        # 36h, not 24h: trip_start_date is the GTFS *service* day, but a
-        # late-night trip's own stops (and thus a same-service alert's real
-        # active_period) can fall in the early hours of the CALENDAR day
-        # after -- confirmed a real case of this exact pattern 2026-07-08
-        # while investigating a claim (a trip departing 21:51 arriving
-        # 00:49 next calendar day). Still far tighter than the old
-        # unscoped-across-45-days match.
-        day_start = datetime.combine(trip_date, datetime.min.time(), tzinfo=config.LOCAL_TZ)
-        day_end = day_start + timedelta(hours=36)
+        calendar_day_start = datetime.combine(trip_date, datetime.min.time(), tzinfo=config.LOCAL_TZ)
+        day_start, day_end = _trip_time_window(t["stops"], calendar_day_start)
         reason = best_reason(lookups, t["trip"], t["route_id"], None, day_start, day_end)
         if reason is None:
             for sid in t["stop_ids"]:

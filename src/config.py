@@ -25,7 +25,10 @@ STATIC_CACHE_MAX_AGE_DAYS = 7
 
 # How long detailed history is kept in Postgres before daily housekeeping
 # deletes it. Applies uniformly to delays, trip_cancellations, seen_trips,
-# missing_trips, alerts, and scan_runs.
+# line_daily_visibility, line_visibility_anomalies, alerts, scan_runs,
+# train_announcements, and housekeeping_runs itself -- see housekeeping.py.
+# ("missing_trips" was named here at some point but never actually exists
+# as a table in schema.sql or any migration -- corrected 2026-07-08.)
 RETENTION_DAYS = 45
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

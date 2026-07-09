@@ -155,7 +155,6 @@
   }
   .stat .sub { font-size: 12px; color: var(--ink-faint); font-family: var(--mono); }
   .stat.crit .value { color: var(--red); }
-  .stat.ok .value { color: var(--green); }
   #myClaimsStats, #checkedOutStats { grid-template-columns: repeat(4, 1fr); }
 
   section { display: flex; flex-direction: column; gap: 12px; }
@@ -633,7 +632,6 @@
     if (km === null || km === undefined) return '–';
     return km.toFixed(1) + ' km';
   }
-  var WEEKDAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   function fmtDate(yyyymmdd) {
     if (!yyyymmdd) return '–';
     return yyyymmdd.slice(0, 4) + '-' + yyyymmdd.slice(4, 6) + '-' + yyyymmdd.slice(6, 8);
@@ -1588,6 +1586,14 @@
       saveTrackingRow(rowsByKey[ck], { claimed: e.target.checked });
       renderMyClaims();
       renderCheckedOut();
+      // renderAll() is the only place that normally calls initStopMaps()
+      // after a DOM rebuild -- these narrower re-renders (deliberately
+      // narrower than renderAll() so keepInView below has something
+      // stable to anchor on) rebuild the same stops-map <div> markup via
+      // renderStopsPanel without it, so an already-expanded leg's Leaflet
+      // map goes blank until some unrelated action happens to trigger a
+      // full renderAll(). Found by code review 2026-07-08.
+      initStopMaps();
       // Checking this box moves the leg between the cart and "checked out"
       // sections (which can appear/disappear) and can grow the card with
       // two new dropdowns — all of which push this exact row further down
@@ -1607,6 +1613,7 @@
       var rk = e.target.dataset.key;
       saveTrackingRow(rowsByKey[rk], { refunded: e.target.checked });
       renderAlreadyFiled();
+      initStopMaps();  // see the claimed-check handler's own note above
       keepInView('.refunded-check[data-key="' + rk + '"]');
     }
   });
@@ -1646,6 +1653,7 @@
       saveTrackingRow(rowsByKey[mkey], { mailed: true });
       renderCheckedOut();
       renderAlreadyFiled();
+      initStopMaps();  // see the claimed-check handler's own note above
       return;
     }
     var digitalBtn = e.target.closest('.digital-btn');
@@ -1658,6 +1666,7 @@
       saveTrackingRow(rowsByKey[dkey], { claimedDigitally: true });
       renderCheckedOut();
       renderAlreadyFiled();
+      initStopMaps();  // see the claimed-check handler's own note above
     }
   });
 

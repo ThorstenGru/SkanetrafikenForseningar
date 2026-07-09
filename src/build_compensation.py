@@ -61,7 +61,19 @@ _REPLACEMENT_BUS_PATTERNS = [
 def _mentions_replacement_bus(reason):
     if not reason:
         return False
-    return any(p.search(reason) for p in _REPLACEMENT_BUS_PATTERNS)
+    # Split on "; " -- the separator trafikverket_merge.py's own
+    # "; ".join(deviations) uses when a trip has multiple distinct
+    # Trafikverket deviation messages -- before matching, not after.
+    # Found by code review 2026-07-08: the DOTALL patterns above are
+    # deliberately loose WITHIN one deviation's own text (a single message
+    # can be multiple sentences), but matched across the whole reason
+    # string they could pair "buss" from one unrelated deviation with
+    # "ersätter" from a completely different one, e.g. "Bussbyte vid Lund
+    # pågår; senare tåget ersätter det inställda" -- two real deviations,
+    # neither of which is actually a replacement-bus notice for the final
+    # leg, that would still match "buss.*ersätter" as one concatenated
+    # string. Checking each segment on its own closes that gap.
+    return any(p.search(seg) for seg in reason.split("; ") for p in _REPLACEMENT_BUS_PATTERNS)
 
 
 def _trip_earliest_time(r):

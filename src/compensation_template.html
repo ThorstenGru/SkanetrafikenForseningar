@@ -460,7 +460,6 @@
     if (v === null || v === undefined) return '–';
     return v.toLocaleString('sv-SE', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + ' kr';
   }
-  var WEEKDAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   function fmtDate(yyyymmdd) {
     if (!yyyymmdd) return '–';
     return yyyymmdd.slice(0, 4) + '-' + yyyymmdd.slice(4, 6) + '-' + yyyymmdd.slice(6, 8);

@@ -6,6 +6,10 @@ on:
       file:
         description: "Path to the migration SQL file, e.g. src/migrations/001_claim_tracking.sql"
         required: true
+      confirm_wipe:
+        description: 'Only required for a destructive migration (004/006/009, or any file whose name contains "wipe"/"reset") -- type WIPE to proceed'
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -30,6 +34,26 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt
+
+      # Guards against exactly the mistake this workflow had no protection
+      # against before (found by code review 2026-07-08): `file` is an
+      # arbitrary workflow_dispatch text input with no allowlist, and three
+      # migrations (004, 006, 009) are one-off TRUNCATE ... RESTART IDENTITY
+      # wipes -- see docs/RUNBOOK.md's own prose warning not to re-run them.
+      # A copy-pasted old command or a "009"/"014" typo would otherwise wipe
+      # production with zero guardrail. Matches by filename pattern, not a
+      # fixed list, so a future destructive migration is caught by name
+      # convention alone.
+      - name: Check for destructive migration
+        run: |
+          FILE="${{ github.event.inputs.file }}"
+          if [[ "$FILE" =~ (wipe|reset) ]]; then
+            if [ "${{ github.event.inputs.confirm_wipe }}" != "WIPE" ]; then
+              echo "::error::$FILE looks destructive (name contains 'wipe' or 'reset'). Re-run with confirm_wipe set to exactly WIPE if this is really intended."
+              exit 1
+            fi
+            echo "::warning::Destructive migration confirmed via confirm_wipe=WIPE: $FILE"
+          fi
 
       - name: Apply migration
         env:

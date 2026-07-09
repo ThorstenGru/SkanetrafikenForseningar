@@ -77,6 +77,14 @@ def main():
                 "train_announcements_deleted": counts.get("train_announcements_deleted"),
             },
         )
+        # housekeeping_runs is this script's OWN audit table -- every other
+        # table it touches gets a retention cutoff, but this one never did,
+        # so it grew one row/day forever. Pruned separately from the
+        # try/except above (deliberately not counted in that same row,
+        # which would need yet another column for a self-referential
+        # count) -- found by code review 2026-07-08.
+        cur.execute("DELETE FROM housekeeping_runs WHERE run_at < %s", (cutoff_ts,))
+        print("Pruned %d old housekeeping_runs row(s)" % cur.rowcount)
         conn.commit()
         cur.close()
         conn.close()
