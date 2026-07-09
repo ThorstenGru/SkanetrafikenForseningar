@@ -10,7 +10,7 @@ own system while this project's GTFS-RT `delays` table AND Skånetrafiken's
 own customer app both independently confirmed the train actually arrived,
 delayed. Two agreeing sources beat one outlier.
 
-Two, and only two, things this module does:
+Three things this module does:
 1. **Enrich** trips GTFS-RT already has data for, with Trafikverket's
    structured `Deviation` reason text when this project's own alert-matching
    (build_dashboard.best_reason) came up empty. Never touches delay/status.
@@ -23,9 +23,23 @@ Two, and only two, things this module does:
    Every gap-filled row is tagged `singleSourceOnly: true`, which
    claims_template.html's `ruleFullyApplies()` treats the same as an
    unconfirmed approximation: shown, never auto-recommended.
+3. **Confirm stale finals** — `confirm_stale_finals()`, added 2026-07-09
+   after the Öresundståg 20154 case (see build_dashboard.py's own note on
+   `final_stop_unconfirmed`): GTFS-RT tracked that trip, but our last poll
+   landed ~50 min before its own recorded "actual" arrival time, so the
+   number we had was a live mid-journey prediction (+23.6 min), never
+   confirmed after the fact. Skånetrafiken's own app later showed the real
+   outcome: +3 min. This does NOT violate the hard rule below --
+   `finalStopUnconfirmed=True` means GTFS-RT itself never reached a verdict
+   for that trip, so there is no existing verdict to override. Trafikverket
+   is only trusted here when it has a REAL post-arrival observation
+   (`actual_at`, not an estimate) recorded strictly AFTER our own last poll
+   -- i.e. genuinely new information from a source that kept watching the
+   train after we stopped, not a competing guess.
 """
 
 import sqlite3
+from datetime import datetime
 
 import config
 from scan import load_trip_meta
@@ -61,6 +75,29 @@ def _load_location_signature_map(cur):
     sig_to_stop = dict(rows)
     stop_to_sig = {stop_id: sig for sig, stop_id in rows}
     return sig_to_stop, stop_to_sig
+
+
+def _stop_name_to_sig(stop_to_sig, stop_names):
+    """stop_name -> location_signature, derived from stop_to_sig (the exact
+    stop_id crosswalk, built by matching Trafikverket's own TrainStation
+    coordinates against this project's GTFS stops within 500m -- see
+    build_location_signature_map.py). GTFS static data commonly has several
+    stop_id variants for one physical station (different boarding
+    platforms/directions), and the crosswalk build only matched ONE variant
+    per station -- so a trip_meta entry whose own origin/destination_stop_id
+    happens to be a different variant of that same station is invisible to
+    a lookup keyed on stop_id alone. Found 2026-07-09 investigating why
+    Öresundståg 20154 (Helsingborg C -> Göteborg C) wasn't picked up by
+    confirm_stale_finals: its destination_stop_id had no crosswalk row, but
+    a different Göteborg C stop_id variant did. Same physical station, so
+    matching by name (not id) is the correct fallback, not a loosening of
+    the match's confidence."""
+    name_to_sig = {}
+    for stop_id, sig in stop_to_sig.items():
+        name = stop_names.get(stop_id)
+        if name and name not in name_to_sig:
+            name_to_sig[name] = sig
+    return name_to_sig
 
 
 def _existing_gtfs_keys(cur, start_date, end_date):
@@ -129,7 +166,7 @@ def _fmt_time(dt):
     return dt.astimezone(config.LOCAL_TZ).strftime("%H:%M")
 
 
-def build_gapfill_rows(cur, start_date, end_date, trip_number_index, stop_names, groups):
+def build_gapfill_rows(cur, start_date, end_date, trip_number_index, stop_names, stop_to_sig, name_to_sig, groups):
     """Rows for trips GTFS-RT never saw at all, built ONLY where Trafikverket
     gives an unambiguous real delay at the trip's own final stop. Returns
     (rows, skipped_count) -- skipped_count is trips that matched a known
@@ -137,12 +174,12 @@ def build_gapfill_rows(cur, start_date, end_date, trip_number_index, stop_names,
     crosswalk hit, or the ambiguous Canceled-with-no-time pattern), logged
     rather than silently dropped so the gap this module leaves is visible.
 
-    trip_number_index/stop_names/groups are loaded once by the caller
-    (merge_trafikverket) and passed in -- this used to reload all three
-    itself, duplicating enrich_reasons()'s identical `groups` query and
+    trip_number_index/stop_names/stop_to_sig/groups are loaded once by the
+    caller (merge_trafikverket) and passed in -- this used to reload all of
+    them itself, duplicating enrich_reasons()'s identical `groups` query,
+    confirm_stale_finals()'s identical location-signature-map query, and
     each of its own two static-index loads within a single merge call
     (found by code review 2026-07-08)."""
-    _sig_to_stop, stop_to_sig = _load_location_signature_map(cur)
     existing_keys = _existing_gtfs_keys(cur, start_date, end_date)
 
     rows = []
@@ -163,8 +200,8 @@ def build_gapfill_rows(cur, start_date, end_date, trip_number_index, stop_names,
         for trip_id, meta in candidates:
             if not meta.get("sommarticket_valid"):
                 continue  # same scope restriction fetch_detail_rows() applies -- see COMPENSATION_RULES.md
-            origin_sig = stop_to_sig.get(meta.get("origin_stop_id"))
-            dest_sig = stop_to_sig.get(meta.get("destination_stop_id"))
+            origin_sig = stop_to_sig.get(meta.get("origin_stop_id")) or name_to_sig.get(stop_names.get(meta.get("origin_stop_id")))
+            dest_sig = stop_to_sig.get(meta.get("destination_stop_id")) or name_to_sig.get(meta.get("destination_stop_name"))
             if dest_sig is None or dest_sig not in by_sig:
                 continue  # can't confirm this specific trip_id's final stop without the crosswalk covering it
 
@@ -262,6 +299,76 @@ def enrich_reasons(rows, groups):
     return rows
 
 
+def confirm_stale_finals(rows, trip_number_index, stop_names, stop_to_sig, name_to_sig, groups):
+    """For rows whose final-stop delay is only an unconfirmed live
+    prediction (`finalStopUnconfirmed=True` -- see build_dashboard.py:
+    GTFS-RT's own last poll happened BEFORE the trip's recorded "actual"
+    arrival, so the number on file was captured mid-journey), check whether
+    Trafikverket independently recorded a REAL observation
+    (`time_at_location`, not an estimate) at this exact trip's own final
+    stop, strictly AFTER our last poll. If so, that's new information from
+    a source that kept watching the train after we stopped -- not
+    Trafikverket overriding an existing GTFS-RT verdict (there wasn't one
+    yet), and not trusted on an estimate alone, which would carry the same
+    "still just a prediction" problem this exists to fix.
+
+    stop_to_sig is the exact stop_id crosswalk; name_to_sig is the
+    same-station-name fallback (see _stop_name_to_sig()) for when the
+    trip's own destination_stop_id is a different GTFS platform variant
+    than the one the crosswalk happened to match.
+
+    Returns (rows, confirmed_count). Mutates matching rows in place:
+    finalDelayMin/maxDelayMin/status are corrected and
+    finalStopUnconfirmed is cleared; finalConfirmedByTrafikverket=True is
+    set so the UI can show this number came from a second source, not our
+    own scanner catching up."""
+    trip_id_to_meta = {tid: meta for cands in trip_number_index.values() for tid, meta in cands}
+    confirmed = 0
+    for r in rows:
+        if not r.get("finalStopUnconfirmed") or not r.get("tripNumber"):
+            continue
+        meta = trip_id_to_meta.get(r["trip"])
+        if not meta:
+            continue
+        dest_sig = stop_to_sig.get(meta.get("destination_stop_id")) or name_to_sig.get(
+            meta.get("destination_stop_name") or stop_names.get(meta.get("destination_stop_id"))
+        )
+        if dest_sig is None:
+            continue
+        try:
+            trip_date = datetime.strptime(r["date"], "%Y%m%d").date()
+        except ValueError:
+            continue
+        announcements = groups.get((r["tripNumber"], trip_date))
+        if not announcements:
+            continue
+        dest_arrival = next(
+            (a for a in announcements
+             if a["location_signature"] == dest_sig and a["activity_type"] == "Ankomst"),
+            None,
+        )
+        # actual_at specifically -- an estimate would just be a second,
+        # differently-timed prediction, not the post-arrival confirmation
+        # this function exists to require.
+        if dest_arrival is None or dest_arrival["actual_at"] is None:
+            continue
+        last_seen = datetime.fromisoformat(r["lastSeen"])
+        if dest_arrival["actual_at"] <= last_seen:
+            continue  # not a later observation than we already have -- no new information
+        final_delay = _delay_min(
+            dest_arrival["advertised_at"], dest_arrival["estimated_at"], dest_arrival["actual_at"]
+        )
+        if final_delay is None:
+            continue
+        r["finalDelayMin"] = final_delay
+        r["maxDelayMin"] = max(r["maxDelayMin"], final_delay) if r["maxDelayMin"] is not None else final_delay
+        r["finalStopUnconfirmed"] = False
+        r["finalConfirmedByTrafikverket"] = True
+        r["status"] = "DELAYED" if final_delay > 1.0 else ("EARLY" if final_delay < -1.0 else "ON_TIME")
+        confirmed += 1
+    return rows, confirmed
+
+
 def merge_trafikverket(rows, cur, start_date, end_date):
     """Top-level entry point for build_compensation.py / build_claims.py.
     Degrades gracefully (returns `rows` unchanged) on ANY failure -- unlike
@@ -276,14 +383,21 @@ def merge_trafikverket(rows, cur, start_date, end_date):
     docs/TRAFIKVERKET_INTEGRATION.md."""
     try:
         trip_number_index, stop_names = _load_static_data()
+        _sig_to_stop, stop_to_sig = _load_location_signature_map(cur)
+        name_to_sig = _stop_name_to_sig(stop_to_sig, stop_names)
         groups = _fetch_announcement_groups(cur, start_date, end_date)
         rows = enrich_reasons(rows, groups)
-        gapfill_rows, skipped = build_gapfill_rows(cur, start_date, end_date, trip_number_index, stop_names, groups)
+        rows, confirmed = confirm_stale_finals(rows, trip_number_index, stop_names, stop_to_sig, name_to_sig, groups)
+        gapfill_rows, skipped = build_gapfill_rows(
+            cur, start_date, end_date, trip_number_index, stop_names, stop_to_sig, name_to_sig, groups
+        )
     except Exception as exc:  # noqa: BLE001 -- intentional, see docstring
         import traceback
         traceback.print_exc()
         print("Trafikverket merge skipped (%s): %s" % (type(exc).__name__, exc))
         return rows
+    if confirmed:
+        print("Trafikverket confirmed %d previously-unconfirmed final-stop prediction(s) with a later post-arrival observation" % confirmed)
     if gapfill_rows or skipped:
         print("Trafikverket gap-fill: %d trip(s) added (GTFS-RT had zero data), %d skipped (ambiguous or unmatched)" % (
             len(gapfill_rows), skipped))

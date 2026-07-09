@@ -269,6 +269,43 @@ correctly contained the failure to just that one step (git commit, page
 builds, and deploy all still succeeded that run) while the underlying bug
 got found and fixed.
 
+## Confirming stale final-stop predictions, 2026-07-09 — a real case
+
+Real journey, same-day: Öresundståg 20154 (Helsingborg C → Göteborg C,
+2026-07-09). GTFS-RT's scanner polled this trip exactly once, at 06:28,
+while it was still ~40 min from its final stop and running ~13 min late.
+That single poll's "actual" arrival field was itself just a live
+prediction (+23.6 min at the time this got surfaced mid-morning), and
+GTFS-RT never polled it again — the app showed that stale prediction as
+the trip's outcome, flagged `finalStopUnconfirmed`. Skånetrafiken's own
+app, still tracking the train live, later showed the real outcome: **+3
+min**.
+
+Checked whether Trafikverket had a real, later observation for the same
+trip: yes — its `TimeAtLocation` at Göteborg C (signature `G`) was 07:08,
+3 minutes after the 07:05 advertised time, recorded well after our own
+06:28 last poll. `confirm_stale_finals()` in `src/trafikverket_merge.py`
+now uses exactly this: for any row GTFS-RT flagged `finalStopUnconfirmed`,
+check whether Trafikverket independently recorded a real post-arrival
+time (never an estimate) strictly after our own last poll, and if so, use
+it to correct `finalDelayMin` and clear the flag. This is not the hard
+rule being broken — `finalStopUnconfirmed=True` means GTFS-RT never
+reached a verdict for that trip in the first place, so there's no
+existing verdict to override; Trafikverket is only trusted to fill a gap
+GTFS-RT left open, using a genuinely later, real observation.
+
+**One real crosswalk gap found and fixed on the way:** the first
+implementation matched the trip's `destination_stop_id` to Trafikverket's
+`location_signature_map` by exact stop_id, and came up empty for this
+exact case — the map had a *different* Göteborg C platform-variant
+stop_id than the one this trip's static schedule actually references.
+Same physical station, different GTFS row. Fixed by falling back to a
+name-based match (`_stop_name_to_sig()`) when the exact id isn't in the
+crosswalk — applied to both `confirm_stale_finals()` and
+`build_gapfill_rows()`, since both share the same id-based lookup and the
+same underlying gap. Verified against the real 20154 data before this
+was pushed, not assumed from the code alone.
+
 ## Coverage: an early, promising, but not yet rigorous signal
 
 A single poll (2026-07-08, ~90 min back to 4 h forward — Trafikverket's own

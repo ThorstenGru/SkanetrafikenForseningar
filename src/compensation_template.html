@@ -263,6 +263,7 @@
   .chip.canceled { background: var(--red-dim); color: #b23a2e; }
   .chip.approx { background: var(--panel-alt); color: var(--ink-faint); }
   .chip.unconfirmed { background: var(--red-dim); color: #b23a2e; cursor: help; }
+  .chip.confirmed { background: var(--green-dim, rgba(45, 148, 76, 0.15)); color: var(--green, #2d944c); cursor: help; }
   .chip.bus-replaced { background: var(--panel-alt); color: var(--ink-faint); cursor: help; }
 
   .option {
@@ -594,6 +595,8 @@
         '<td class="num">' + r.delayUsedMin.toFixed(1) + ' min' +
           (r.finalStopUnconfirmed
             ? ' <span class="chip unconfirmed" title="The last time our scanner polled this trip was BEFORE its own recorded arrival time -- this number is a live prediction captured mid-journey, never confirmed after the trip actually finished. A real case (2026-07-09, Öresundståg 20154) predicted +23.6 min at this exact point and the train actually recovered to +3 min by arrival, confirmed by Skånetrafiken\'s own app.">⏱ prediction, not confirmed</span>'
+            : r.finalConfirmedByTrafikverket
+            ? ' <span class="chip confirmed" title="Our own scanner\'s last poll for this trip happened before it actually arrived, so we only had a mid-journey prediction. Trafikverket independently kept tracking this train and recorded a real post-arrival time, which this figure now uses instead.">✓ confirmed via Trafikverket</span>'
             : (r.delayApprox ? ' <span class="chip approx">approx.</span>' : '')) +
           (r.singleSourceOnly ? ' <span class="chip approx" title="Never appeared in Skånetrafiken\'s own realtime feed -- this delay is from Trafikverket\'s independent data only, not corroborated.">Trafikverket only</span>' : '') + '</td>' +
         '<td><span class="chip ' + tierClass(r) + '">' + r.deductionPct + '%</span></td>' +

@@ -395,6 +395,12 @@
     font-weight: 600;
     border-bottom: 1px dotted var(--red);
   }
+  .confirmed-flag {
+    cursor: help;
+    color: var(--green);
+    font-weight: 600;
+    border-bottom: 1px dotted var(--green);
+  }
   .stops-panel table { width: 100%; border-collapse: collapse; }
   .stops-panel th {
     text-align: left;
@@ -1218,6 +1224,8 @@
       : '<span class="chip ' + tierClass(r) + '">' + r.deductionPct + '%' +
         (r.finalStopUnconfirmed
           ? ' <span class="approx-flag" title="The last time our scanner polled this trip was BEFORE its own recorded arrival time -- this number is a live prediction captured mid-journey, never confirmed after the trip actually finished. A real case (2026-07-09, Öresundståg 20154) predicted +23.6 min at this exact point and the train actually recovered to +3 min by arrival, confirmed by Skånetrafiken\'s own app. Verify against the Skånetrafiken app before filing.">⏱ prediction, not confirmed</span>'
+          : r.finalConfirmedByTrafikverket
+          ? ' <span class="confirmed-flag" title="Our own scanner\'s last poll for this trip happened before it actually arrived, so we only had a mid-journey prediction. Trafikverket independently kept tracking this train and recorded a real post-arrival time, which this figure now uses instead.">✓ confirmed via Trafikverket</span>'
           : (r.delayApprox ? ' approx.' : '')) +
         '</span>';
     // Trafikverket-only gap-fill (src/trafikverket_merge.py): a real trip
