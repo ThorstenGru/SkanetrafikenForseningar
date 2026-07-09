@@ -95,10 +95,21 @@ def _trip_earliest_time(r):
 
 def compute_compensation(rows):
     purchased_at = config.sommarbiljett_purchased_at()
+    today = datetime.now(config.LOCAL_TZ).date()
     out = []
     for r in rows:
         if _trip_earliest_time(r) < purchased_at:
             continue  # trip happened before this ticket was purchased — never eligible, never shown
+
+        # Confirmed directly by Skånetrafiken support, 2026-07-09 (see
+        # config.SKANETRAFIKEN_REGISTRATION_LAG_DAYS): their own system can
+        # take 1-2 days to fully register a trip's delay, and a claim filed
+        # before that can be auto-rejected against a stale, too-low number
+        # even when the true delay clears the threshold. Flagged here, not
+        # silently -- carried through to every calc branch below via
+        # dict(r, ...).
+        trip_date = datetime.strptime(r["date"], "%Y%m%d").date()
+        r = dict(r, recentTrip=(today - trip_date).days < config.SKANETRAFIKEN_REGISTRATION_LAG_DAYS)
 
         if r["status"] == "CANCELLED_TRIP":
             out.append(dict(r, calc="cancelled", delayUsedMin=None, delayApprox=False))

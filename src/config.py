@@ -196,6 +196,18 @@ def route_type_label(route_type):
 # real claim calculation.
 MIN_DELAY_FOR_COMPENSATION_MIN = 20  # below this, no compensation applies at all
 
+# Confirmed directly by a Skånetrafiken support agent (chat, 2026-07-09,
+# reklamationsnummer RG2026-07-WZ4T2Y), not inferred: a claim filed too soon
+# after the trip can be auto-rejected against a delay figure their own
+# system hasn't finished registering yet. On this specific claim, their
+# system showed 18 min (under the 20-min threshold, triggering an automatic
+# rejection) when first checked, then 22 min on a manual re-check the same
+# day -- still short of this project's own recorded 26.1 min. The agent's
+# own words: "Ibland kan det vara bra att vänta 1-2 dagar innan man ansöker
+# för att alla förseningar ska hinna registreras i systemet." See
+# docs/COMPENSATION_RULES.md for the full writeup.
+SKANETRAFIKEN_REGISTRATION_LAG_DAYS = 2
+
 # Below this, a stop-level delay isn't even written to `delays` at all (a
 # 2026-07-07 fix -- GTFS-RT reports delay down to the second for completely
 # routine timing jitter, which was 94% of the table's rows and bytes for

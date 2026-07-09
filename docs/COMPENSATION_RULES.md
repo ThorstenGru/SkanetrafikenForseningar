@@ -782,3 +782,59 @@ called at the end of every `renderAll()`, since a full innerHTML re-render
 tears down whatever DOM node a previous Leaflet instance was bound to —
 there's no way to "reattach" a live map, so a still-expanded panel just
 gets a fresh one each time.
+
+## 22. Resolution of the train 11316 rejection — the real cause, and a confirmed 1-2 day registration lag
+
+§20 documents the "replacement bus = not claimable" rule, built after train
+11316's rejection cited "resalternativ" — at the time, the best available
+theory, since no specific alternative route could be found for that
+journey (checked directly: the only other same-day, same-destination
+service, train 1022 on route 805, was itself delayed to Helsingborg C by
+23.2 min — 1 minute *later* than 11316's own confirmed 08:46:03 arrival,
+so switching wouldn't have helped either).
+
+**The real cause, confirmed 2026-07-09 directly by a Skånetrafiken support
+agent** (chat transcript, reklamationsnummer `RG2026-07-WZ4T2Y`): the
+rejection was an **automatic decision**, and the "resalternativ" wording in
+the rejection email is generic template text covering multiple possible
+reasons, not a specific finding for this journey. The agent (Michelle)
+said outright: *"Resan har identifierats som 18 minuter försenad, vilket
+inte berättigar till ersättning"* — Skånetrafiken's own system had this
+trip at **18 minutes** delayed (under the 20-min threshold) when the
+automatic check ran. On a manual re-check the same day she found **22
+minutes** (arrival 08:42) and reopened the case — still short of this
+project's own recorded **26.1 minutes** (arrival 08:46:03, per GTFS-RT).
+
+Asked directly whether the first decision was automatic ("var första
+besked en automatisk beslut?"), she confirmed: *"Ja, det var det."* Asked
+how to avoid this in future, her answer: *"Det är ingenting som du har
+gjort fel utan det är något litet strul i systemet bara. Ibland kan det
+vara bra att vänta 1-2 dagar innan man ansöker för att alla förseningar
+ska hinna registreras i systemet."* — nothing the rider did wrong; their
+own system can take **1-2 days** after a trip to finish registering its
+delay, and filing before that risks an automatic rejection against a
+stale, too-low number.
+
+**This is a third, independent source of delay-figure discrepancy**,
+distinct from the two this project already handles:
+- `delayApprox`/`finalStopUnconfirmed` (build_dashboard.py) — *this
+  project's own* scanner never got a later poll to confirm a final
+  number.
+- `singleSourceOnly` (trafikverket_merge.py) — a trip only Trafikverket
+  saw, never corroborated by Skånetrafiken's own feed.
+- **`recentTrip`** (new, `config.SKANETRAFIKEN_REGISTRATION_LAG_DAYS = 2`)
+  — *Skånetrafiken's own backend* hasn't finished registering the trip
+  yet, confirmed by their own support staff, not inferred. Computed in
+  `compute_compensation()`: `(today - trip_date).days <
+  SKANETRAFIKEN_REGISTRATION_LAG_DAYS`. Excluded from `ruleFullyApplies()`
+  in `claims_template.html` for the same reason as the other two — never
+  auto-recommend a claim on a number that hasn't settled — and shown with
+  a distinct "⏳ wait before filing" chip in both `claims.html` and
+  `compensation.html`, carrying the same real-case explanation in its
+  tooltip.
+
+**Practical consequence:** don't file a claim within ~2 days of the trip
+even when this project's own data already shows a clear, well-over-20-min
+delay — Skånetrafiken's own system may not agree yet, and an early filing
+can be auto-rejected on a number that later gets corrected upward once
+their system catches up.

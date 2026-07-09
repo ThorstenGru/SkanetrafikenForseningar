@@ -1236,6 +1236,16 @@
     var singleSourceFlag = r.singleSourceOnly
       ? '<span class="chip single-source" title="This trip never appeared in Skånetrafiken\'s own realtime feed at all -- this delay comes only from Trafikverket\'s independent data, not corroborated by Skånetrafiken\'s own systems. Verify manually (e.g. against the Skånetrafiken app or your own memory of the journey) before filing.">⚠ Trafikverket only</span>'
       : '';
+    // Confirmed directly by Skånetrafiken support (chat, 2026-07-09,
+    // reklamationsnummer RG2026-07-WZ4T2Y): their own system can take 1-2
+    // days to finish registering a trip's delay. On that real claim, their
+    // system showed 18 min (auto-rejected) then 22 min on manual re-check
+    // the same day -- still short of this project's own recorded 26.1 min.
+    // Filing before their own system has caught up risks the exact same
+    // outcome, even when the true delay clears the threshold.
+    var recentTripFlag = r.recentTrip
+      ? '<span class="chip single-source" title="Skånetrafiken\'s own support confirmed their system can take 1-2 days after a trip to finish registering its delay. A real claim was auto-rejected because their system still showed only 18 min at the time it was filed -- later corrected to 22 min on manual review, still short of this project\'s own 26.1 min for that same trip. Consider waiting before filing this one.">⏳ recent trip -- wait before filing</span>'
+      : '';
     var amounts = r.calc === 'eligible'
       ? '<span class="leg-amounts">' +
           '<span>Prisavdrag (voucher): <strong>' + fmtSek(r.deductionVoucher) + '</strong></span>' +
@@ -1253,6 +1263,7 @@
       '<span class="leg-time num">' + fmtTime(r.originTimeIso) + '–' + fmtTime(r.destTimeIso) + '</span>' +
       tier +
       singleSourceFlag +
+      recentTripFlag +
       amounts +
       '</label>';
 
@@ -1366,7 +1377,14 @@
   // has direct, confirmed evidence (docs/TRAFIKVERKET_INTEGRATION.md
   // Question #3) that a single Trafikverket signal can be wrong even when
   // it looks unambiguous.
-  function ruleFullyApplies(r) { return r.calc === 'eligible' && !r.delayApprox && !r.singleSourceOnly; }
+  // recentTrip excluded for the same "don't recommend on an unsettled
+  // number" reason -- confirmed directly by Skånetrafiken support chat,
+  // 2026-07-09 (reklamationsnummer RG2026-07-WZ4T2Y): their own system can
+  // take 1-2 days to finish registering a trip's delay, and a claim filed
+  // before that risks exactly what happened on that claim -- an automatic
+  // rejection against a stale, too-low number. See
+  // docs/COMPENSATION_RULES.md.
+  function ruleFullyApplies(r) { return r.calc === 'eligible' && !r.delayApprox && !r.singleSourceOnly && !r.recentTrip; }
   var suggested = {};
   Object.keys(dayChains).forEach(function (d) {
     var best = dayChains[d].slice().sort(compareChains)[0];
