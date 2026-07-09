@@ -110,13 +110,23 @@ def compute_compensation(rows):
             # than silently dropping it (this project's own "no silent
             # caps" principle). Still carries whatever delay figure exists,
             # for visibility, but never a computed deduction amount.
-            approx = r["finalDelayMin"] is None
-            delay_min = r["finalDelayMin"] if not approx else r["maxDelayMin"]
+            approx = r["finalDelayMin"] is None or bool(r.get("finalStopUnconfirmed"))
+            delay_min = r["finalDelayMin"] if r["finalDelayMin"] is not None else r["maxDelayMin"]
             out.append(dict(r, calc="bus_replaced", delayUsedMin=delay_min, delayApprox=approx))
             continue
 
         delay_min = r["finalDelayMin"]
-        approx = False
+        # delayApprox also covers finalStopUnconfirmed -- found by code
+        # review 2026-07-09 on a real journey (Öresundståg 20154): the
+        # final stop WAS captured, but only as a live prediction taken
+        # while the trip was still ~50 minutes from actually arriving,
+        # captured once and never updated (see build_dashboard.py's own
+        # note on how this is detected). That's not a confirmed number any
+        # more than "final stop never captured at all" is -- both get the
+        # same treatment: shown, flagged "approx.", never auto-recommended
+        # (ruleFullyApplies() in claims_template.html already gates on
+        # !delayApprox).
+        approx = bool(r.get("finalStopUnconfirmed"))
         if delay_min is None:
             delay_min = r["maxDelayMin"]
             approx = True

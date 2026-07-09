@@ -230,6 +230,7 @@ def fetch_detail_rows(cur, start_date, end_date, single_date):
                 "vehicleType": vehicle_type or "UNKNOWN", "tripNumber": trip_number, "dest": dest,
                 "distanceKm": distance_km, "route_id": route_id, "stop_ids": [], "stops": [],
                 "final_relationship": None, "final_delay_sec": None, "max_delay_sec": None,
+                "final_stop_unconfirmed": False,
                 "is_cancelled": False, "firstSeen": first_seen, "lastSeen": last_seen, "polls": 0,
             }
             trips[key] = t
@@ -249,8 +250,36 @@ def fetch_detail_rows(cur, start_date, end_date, single_date):
         t["lastSeen"] = max(t["lastSeen"], last_seen)
         t["max_delay_sec"] = max(t["max_delay_sec"] or 0, max_abs_delay or 0)
         if is_final:
+            # ARRIVAL delay, not departure -- Skånetrafiken's own rule is
+            # literally "delay to your final destination" (arrival), and a
+            # train's own "departure" from its terminus is usually just the
+            # empty stock continuing on, not a passenger-relevant event.
+            # Found by code review 2026-07-09 on a real journey (Öresundståg
+            # 20154) where this alone overstated the claim by ~11 minutes
+            # (23.6 vs the already-recorded 12.9 arrival figure) --
+            # previously used the same dep-preferred logic as every other
+            # stop, which is the right call for an INTERMEDIATE stop (when
+            # did the delay become visible) but the wrong one for the final
+            # stop specifically.
+            final_relevant_delay_sec = arr_delay if arr_delay not in (None, 0) else dep_delay
+            final_relevant_actual_time = arr_time if arr_delay not in (None, 0) else dep_time
             t["final_relationship"] = stop_rel
-            t["final_delay_sec"] = stop_delay_sec
+            t["final_delay_sec"] = final_relevant_delay_sec
+            # If the last time we ever polled this trip was BEFORE the
+            # "actual" timestamp stored for its final stop, that timestamp
+            # is mathematically a live GTFS-RT PREDICTION captured while the
+            # trip was still in progress, never a confirmed post-arrival
+            # observation -- the same train (20154) above was polled exactly
+            # once, ~50 minutes before its own recorded "actual" arrival
+            # time, while the delay was still growing early in the journey.
+            # Skånetrafiken's own app later confirmed the train recovered to
+            # +3 min; ours never got a later poll to find that out. Flagged
+            # here rather than silently trusted -- see delayApprox's own
+            # precedent for "don't recommend a claim on an unconfirmed
+            # number."
+            t["final_stop_unconfirmed"] = bool(
+                final_relevant_actual_time and last_seen < final_relevant_actual_time
+            )
 
     cur.execute(
         """SELECT trip_id, trip_start_date, route_id, route_short_name, vehicle_type, trip_number,
@@ -266,6 +295,7 @@ def fetch_detail_rows(cur, start_date, end_date, single_date):
             "vehicleType": vehicle_type or "UNKNOWN", "tripNumber": trip_number, "dest": dest,
             "distanceKm": distance_km, "route_id": route_id, "stop_ids": [], "stops": [],
             "final_relationship": None, "final_delay_sec": None, "max_delay_sec": None,
+            "final_stop_unconfirmed": False,
             "is_cancelled": True, "firstSeen": first_seen, "lastSeen": last_seen, "polls": polls,
         }
 
@@ -285,6 +315,7 @@ def fetch_detail_rows(cur, start_date, end_date, single_date):
             "status": classify_trip(t["final_relationship"], t["final_delay_sec"], t["is_cancelled"]),
             "finalDelayMin": round(t["final_delay_sec"] / 60, 1) if t["final_delay_sec"] is not None else None,
             "maxDelayMin": round(t["max_delay_sec"] / 60, 1) if t["max_delay_sec"] is not None else None,
+            "finalStopUnconfirmed": t["final_stop_unconfirmed"],
             "reason": reason,
             "stops": sorted(t["stops"], key=lambda s: s["seq"] if s["seq"] is not None else 0),
             "firstSeen": t["firstSeen"].isoformat(), "lastSeen": t["lastSeen"].isoformat(), "polls": t["polls"],

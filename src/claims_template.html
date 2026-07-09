@@ -389,6 +389,12 @@
     cursor: help;
     border-bottom: 1px dotted var(--ink-faint);
   }
+  .approx-flag {
+    cursor: help;
+    color: var(--red);
+    font-weight: 600;
+    border-bottom: 1px dotted var(--red);
+  }
   .stops-panel table { width: 100%; border-collapse: collapse; }
   .stops-panel th {
     text-align: left;
@@ -1209,7 +1215,11 @@
       ? '<span class="chip canceled">Cancelled</span>'
       : r.calc === 'bus_replaced'
       ? '<span class="chip bus-replaced" title="A replacement bus was in effect for this journey -- treated as not claimable, since a replacement bus is itself an alternative route to your final destination.">🚌 Not claimable</span>'
-      : '<span class="chip ' + tierClass(r) + '">' + r.deductionPct + '%' + (r.delayApprox ? ' approx.' : '') + '</span>';
+      : '<span class="chip ' + tierClass(r) + '">' + r.deductionPct + '%' +
+        (r.finalStopUnconfirmed
+          ? ' <span class="approx-flag" title="The last time our scanner polled this trip was BEFORE its own recorded arrival time -- this number is a live prediction captured mid-journey, never confirmed after the trip actually finished. A real case (2026-07-09, Öresundståg 20154) predicted +23.6 min at this exact point and the train actually recovered to +3 min by arrival, confirmed by Skånetrafiken\'s own app. Verify against the Skånetrafiken app before filing.">⏱ prediction, not confirmed</span>'
+          : (r.delayApprox ? ' approx.' : '')) +
+        '</span>';
     // Trafikverket-only gap-fill (src/trafikverket_merge.py): a real trip
     // GTFS-RT never saw, filled in from a second source -- but never
     // corroborated by Skånetrafiken's own feed. Never auto-recommended
