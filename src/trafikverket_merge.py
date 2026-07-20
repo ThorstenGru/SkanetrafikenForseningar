@@ -42,6 +42,7 @@ import sqlite3
 from datetime import datetime
 
 import config
+from build_dashboard import _is_delay_irrelevant_alert
 from scan import load_trip_meta
 
 
@@ -283,10 +284,19 @@ def enrich_reasons(rows, groups):
     already have GTFS-RT data but no reason of their own (best_reason() in
     build_dashboard.py came up empty). Never touches delay/status/calc --
     text only. `groups` is loaded once by the caller (merge_trafikverket)
-    and shared with build_gapfill_rows() -- see its own docstring."""
+    and shared with build_gapfill_rows() -- see its own docstring.
+
+    Same _is_delay_irrelevant_alert() guard as best_reason() -- unlikely to
+    ever match here (Trafikverket's own Deviation vocabulary is things like
+    "Inställt"/"Buss ersätter"/"Spårändrat", not a Skånetrafiken-specific
+    bike-capacity notice), but cheap to apply for the same reason: a reason
+    unrelated to timing should never be shown as if it explains a delay."""
     by_key = {}
     for (train_number, traffic_date), announcements in groups.items():
-        deviations = sorted(set(a["deviation_text"] for a in announcements if a["deviation_text"]))
+        deviations = sorted(set(
+            a["deviation_text"] for a in announcements
+            if a["deviation_text"] and not _is_delay_irrelevant_alert(a["deviation_text"])
+        ))
         if deviations:
             by_key[(train_number, traffic_date.strftime("%Y%m%d"))] = "; ".join(deviations)
 

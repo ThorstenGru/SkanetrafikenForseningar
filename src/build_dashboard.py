@@ -21,6 +21,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 from datetime import date, datetime, timedelta, timezone
 
 import psycopg2
@@ -28,6 +29,26 @@ import psycopg2.extras
 
 import config
 import db
+
+# Alerts that describe something other than the train running late --
+# found 2026-07-20 investigating a real user concern that a seasonal bike-
+# capacity notice ("Platsbrist för cyklar" / "Det kan vara platsbrist för
+# cyklar i sommar...") was showing up as the delay "reason" for real,
+# substantial delays (25-82 min) on routes 804/805/806/817. Root cause: this
+# specific alert has NO trip_id at all, only route_id+stop_id, with an
+# active_period spanning 2026-06-05..2026-08-15 (2.5 months) -- so
+# best_reason()'s trip->stop->route fallback picks it up for almost any
+# delay on those routes that lacks a more specific trip-level alert,
+# masking whatever the real cause actually was. Confirmed this never
+# affects delay_sec/status/calc (best_reason() is display-only, see its own
+# docstring) -- only the misleading TEXT shown as "why?". Excluded at the
+# lookup-build stage so it can never win the fallback, regardless of how
+# specific/unspecific the alternative candidates are.
+_DELAY_IRRELEVANT_ALERT_RE = re.compile(r"platsbrist", re.IGNORECASE)
+
+
+def _is_delay_irrelevant_alert(desc):
+    return bool(desc) and bool(_DELAY_IRRELEVANT_ALERT_RE.search(desc))
 
 TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard_template.html")
 
@@ -51,7 +72,13 @@ def build_alert_lookups(cur):
     investigating a real claim rejection -- a delay reason shown for one
     day's trip turned out to belong to a different day entirely. Each alert
     now carries its own active_period so best_reason() can require the
-    alert to have actually been active on the specific day being displayed."""
+    alert to have actually been active on the specific day being displayed.
+
+    Alerts matching _is_delay_irrelevant_alert() (e.g. the seasonal bike-
+    capacity notice, see that function's own note) are dropped here, before
+    they ever enter by_trip/by_route/by_stop -- so they can never be
+    selected by best_reason()'s fallback, no matter how much more specific
+    a real candidate would otherwise have to be to beat them."""
     cur.execute(
         """SELECT e.trip_id, e.route_id, e.stop_id, a.description_text,
                   a.active_period_start, a.active_period_end
@@ -59,6 +86,8 @@ def build_alert_lookups(cur):
     )
     by_trip, by_route, by_stop = {}, {}, {}
     for trip_id, route_id, stop_id, desc, start, end in cur.fetchall():
+        if _is_delay_irrelevant_alert(desc):
+            continue
         entry = (desc, start, end)
         if trip_id:
             by_trip.setdefault(trip_id, []).append(entry)
