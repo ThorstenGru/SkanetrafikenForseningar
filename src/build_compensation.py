@@ -93,10 +93,40 @@ def _trip_earliest_time(r):
     return datetime.fromisoformat(r["firstSeen"])
 
 
+def _delay_basis(r):
+    """Explains what a row's own delay number actually rests on --
+    requested by the user 2026-07-20 after raising a direct concern that
+    some "eligible" trips might not have a real delay behind them at all.
+    A data audit against the live payload confirmed the concern was
+    warranted: of 843 eligible trips, only 20% had a genuinely confirmed
+    final-arrival delay; the rest split across a stale unconfirmed
+    prediction (36%), a second-source Trafikverket confirmation (22%,
+    trustworthy but independent), an intermediate-stop-only fallback with
+    no final-stop observation at all (11% -- "a station was passed late",
+    not necessarily the train itself at its destination), or Trafikverket
+    as the sole, uncorroborated source (10%). Every eligible/bus_replaced
+    row now carries this explicitly rather than a single generic "approx."
+    label, so the UI can say exactly which kind of evidence backs the
+    number. Order matters -- checked most-authoritative-exception first:
+    singleSourceOnly and finalConfirmedByTrafikverket are about WHICH
+    source produced the number, checked before finalDelayMin's own
+    presence/confirmation state."""
+    if r.get("singleSourceOnly"):
+        return "trafikverket_only"
+    if r.get("finalConfirmedByTrafikverket"):
+        return "final_confirmed_via_trafikverket"
+    if r.get("finalDelayMin") is None:
+        return "max_delay_fallback"
+    if r.get("finalStopUnconfirmed"):
+        return "final_stop_prediction_unconfirmed"
+    return "final_arrival_confirmed"
+
+
 def compute_compensation(rows):
     purchased_at = config.sommarbiljett_purchased_at()
     today = datetime.now(config.LOCAL_TZ).date()
     out = []
+    low_value_skipped = 0
     for r in rows:
         if _trip_earliest_time(r) < purchased_at:
             continue  # trip happened before this ticket was purchased — never eligible, never shown
@@ -123,7 +153,7 @@ def compute_compensation(rows):
             # for visibility, but never a computed deduction amount.
             approx = r["finalDelayMin"] is None or bool(r.get("finalStopUnconfirmed"))
             delay_min = r["finalDelayMin"] if r["finalDelayMin"] is not None else r["maxDelayMin"]
-            out.append(dict(r, calc="bus_replaced", delayUsedMin=delay_min, delayApprox=approx))
+            out.append(dict(r, calc="bus_replaced", delayUsedMin=delay_min, delayApprox=approx, delayBasis=_delay_basis(r)))
             continue
 
         delay_min = r["finalDelayMin"]
@@ -152,17 +182,32 @@ def compute_compensation(rows):
         if r["distanceKm"]:
             car_cash = round(min(r["distanceKm"] * config.CAR_RATE_SEK_PER_KM, config.ALT_TRANSPORT_CAP_SEK), 2)
 
+        # Requested by the user 2026-07-20: a claim worth less than this
+        # isn't worth the effort of filing, so don't even list it. Checked
+        # against the best-case amount across both payout paths (voucher
+        # price-deduction, or mileage reimbursement) -- the same
+        # max(deductionVoucher, carCash) metric claims_template.html's own
+        # legValue()/chain-scoring already uses, so "best possible amount"
+        # means the same thing everywhere on this project.
+        if max(deduction_voucher, car_cash or 0) < config.MIN_CLAIM_VALUE_SEK:
+            low_value_skipped += 1
+            continue
+
         out.append(dict(
             r,
             calc="eligible",
             delayUsedMin=delay_min,
             delayApprox=approx,
+            delayBasis=_delay_basis(r),
             deductionPct=int(round(pct * 100)),
             deductionCash=deduction_cash,
             deductionVoucher=deduction_voucher,
             carCash=car_cash,
             carVoucher=car_cash,
         ))
+    if low_value_skipped:
+        print("compute_compensation: %d otherwise-eligible trip(s) skipped -- best-case amount under %d kr" % (
+            low_value_skipped, config.MIN_CLAIM_VALUE_SEK))
     return out
 
 

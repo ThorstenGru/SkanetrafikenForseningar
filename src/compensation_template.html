@@ -525,6 +525,28 @@
     return 'tier50';
   }
 
+  // What a row's own delayUsedMin actually rests on (build_compensation.py's
+  // _delay_basis()) -- requested by the user 2026-07-20 after a data audit
+  // found only 20% of "eligible" trips had a genuinely confirmed
+  // final-arrival delay. "max_delay_fallback" is the new case this added:
+  // the final stop was NEVER recorded at all, so the number shown is just
+  // the largest delay observed at ANY stop along the route -- "a station
+  // was passed late", not necessarily the train's own final destination.
+  // "trafikverket_only"/singleSourceOnly gets its own separate chip further
+  // down (unchanged), so it returns '' here to avoid showing it twice.
+  function delayBasisFlagHtml(r) {
+    switch (r.delayBasis) {
+      case 'final_stop_prediction_unconfirmed':
+        return ' <span class="chip unconfirmed" title="The last time our scanner polled this trip was BEFORE its own recorded arrival time -- this number is a live prediction captured mid-journey, never confirmed after the trip actually finished. A real case (2026-07-09, Öresundståg 20154) predicted +23.6 min at this exact point and the train actually recovered to +3 min by arrival, confirmed by Skånetrafiken\'s own app.">⏱ prediction, not confirmed</span>';
+      case 'final_confirmed_via_trafikverket':
+        return ' <span class="chip confirmed" title="Our own scanner\'s last poll for this trip happened before it actually arrived, so we only had a mid-journey prediction. Trafikverket independently kept tracking this train and recorded a real post-arrival time, which this figure now uses instead.">✓ confirmed via Trafikverket</span>';
+      case 'max_delay_fallback':
+        return ' <span class="chip unconfirmed" title="Your final destination\'s own arrival was never recorded at all -- this number is the LARGEST delay observed at ANY stop along the route instead, i.e. a station was passed late, not a confirmed delay at YOUR final stop. The train could have made up time before arriving, or could have gotten later still.">🚉 station passed late, final unconfirmed</span>';
+      default:
+        return r.delayApprox ? ' <span class="chip approx">approx.</span>' : '';
+    }
+  }
+
   function matchesFilters(r) {
     var tf = tierFilterEl.value;
     if (tf === 'cancelled' && r.calc !== 'cancelled') return false;
@@ -593,11 +615,7 @@
         '<td>' + esc(r.dest || '–') + '</td>' +
         '<td class="num">' + fmtKm(r.distanceKm) + '</td>' +
         '<td class="num">' + r.delayUsedMin.toFixed(1) + ' min' +
-          (r.finalStopUnconfirmed
-            ? ' <span class="chip unconfirmed" title="The last time our scanner polled this trip was BEFORE its own recorded arrival time -- this number is a live prediction captured mid-journey, never confirmed after the trip actually finished. A real case (2026-07-09, Öresundståg 20154) predicted +23.6 min at this exact point and the train actually recovered to +3 min by arrival, confirmed by Skånetrafiken\'s own app.">⏱ prediction, not confirmed</span>'
-            : r.finalConfirmedByTrafikverket
-            ? ' <span class="chip confirmed" title="Our own scanner\'s last poll for this trip happened before it actually arrived, so we only had a mid-journey prediction. Trafikverket independently kept tracking this train and recorded a real post-arrival time, which this figure now uses instead.">✓ confirmed via Trafikverket</span>'
-            : (r.delayApprox ? ' <span class="chip approx">approx.</span>' : '')) +
+          delayBasisFlagHtml(r) +
           (r.singleSourceOnly ? ' <span class="chip approx" title="Never appeared in Skånetrafiken\'s own realtime feed -- this delay is from Trafikverket\'s independent data only, not corroborated.">Trafikverket only</span>' : '') +
           (r.recentTrip ? ' <span class="chip approx" title="Skånetrafiken\'s own support confirmed (chat, 2026-07-09, reklamationsnummer RG2026-07-WZ4T2Y) that their system can take 1-2 days after a trip to finish registering its delay. A real claim was auto-rejected because their system still showed only 18 min at filing time -- later corrected to 22 min on manual review, still short of this project\'s own 26.1 min for that trip. Consider waiting before filing.">⏳ wait before filing</span>' : '') + '</td>' +
         '<td><span class="chip ' + tierClass(r) + '">' + r.deductionPct + '%</span></td>' +

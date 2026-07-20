@@ -196,6 +196,13 @@ def route_type_label(route_type):
 # real claim calculation.
 MIN_DELAY_FOR_COMPENSATION_MIN = 20  # below this, no compensation applies at all
 
+# Requested by the user 2026-07-20: a claim worth less than this isn't
+# worth listing at all. Checked against the best-case amount across both
+# payout paths (voucher price-deduction, or mileage reimbursement) -- see
+# compute_compensation()'s own note on why that's the same metric
+# claims_template.html's chain-scoring already uses.
+MIN_CLAIM_VALUE_SEK = 150
+
 # Confirmed directly by a Skånetrafiken support agent (chat, 2026-07-09,
 # reklamationsnummer RG2026-07-WZ4T2Y), not inferred: a claim filed too soon
 # after the trip can be auto-rejected against a delay figure their own

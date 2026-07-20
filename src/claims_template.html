@@ -1264,6 +1264,28 @@
       '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div>';
   }
 
+  // What a row's own delayUsedMin actually rests on (build_compensation.py's
+  // _delay_basis()) -- requested by the user 2026-07-20 after a data audit
+  // found only 20% of "eligible" trips had a genuinely confirmed
+  // final-arrival delay. "max_delay_fallback" is the new case this added:
+  // the final stop was NEVER recorded at all, so the number shown is just
+  // the largest delay observed at ANY stop along the route -- "a station
+  // was passed late", not necessarily the train's own final destination.
+  // "trafikverket_only" returns '' here because that case already gets its
+  // own separate chip (singleSourceFlag, below) -- avoids showing it twice.
+  function delayBasisFlagHtml(r) {
+    switch (r.delayBasis) {
+      case 'final_stop_prediction_unconfirmed':
+        return ' <span class="approx-flag" title="The last time our scanner polled this trip was BEFORE its own recorded arrival time -- this number is a live prediction captured mid-journey, never confirmed after the trip actually finished. A real case (2026-07-09, Öresundståg 20154) predicted +23.6 min at this exact point and the train actually recovered to +3 min by arrival, confirmed by Skånetrafiken\'s own app. Verify against the Skånetrafiken app before filing.">⏱ prediction, not confirmed</span>';
+      case 'final_confirmed_via_trafikverket':
+        return ' <span class="confirmed-flag" title="Our own scanner\'s last poll for this trip happened before it actually arrived, so we only had a mid-journey prediction. Trafikverket independently kept tracking this train and recorded a real post-arrival time, which this figure now uses instead.">✓ confirmed via Trafikverket</span>';
+      case 'max_delay_fallback':
+        return ' <span class="approx-flag" title="Your final destination\'s own arrival was never recorded at all -- this number is the LARGEST delay observed at ANY stop along the route instead, i.e. a station was passed late, not a confirmed delay at YOUR final stop. The train could have made up time before arriving, or could have gotten later still. Verify against the Skånetrafiken app before filing.">🚉 station passed late, final unconfirmed</span>';
+      default:
+        return r.delayApprox ? ' approx.' : '';
+    }
+  }
+
   function legHtml(r, opts) {
     opts = opts || {};
     var key = rowKey(r);
@@ -1279,13 +1301,7 @@
       ? '<span class="chip canceled">Cancelled</span>'
       : r.calc === 'bus_replaced'
       ? '<span class="chip bus-replaced" title="A replacement bus was in effect for this journey -- treated as not claimable, since a replacement bus is itself an alternative route to your final destination.">🚌 Not claimable</span>'
-      : '<span class="chip ' + tierClass(r) + '">' + r.deductionPct + '%' +
-        (r.finalStopUnconfirmed
-          ? ' <span class="approx-flag" title="The last time our scanner polled this trip was BEFORE its own recorded arrival time -- this number is a live prediction captured mid-journey, never confirmed after the trip actually finished. A real case (2026-07-09, Öresundståg 20154) predicted +23.6 min at this exact point and the train actually recovered to +3 min by arrival, confirmed by Skånetrafiken\'s own app. Verify against the Skånetrafiken app before filing.">⏱ prediction, not confirmed</span>'
-          : r.finalConfirmedByTrafikverket
-          ? ' <span class="confirmed-flag" title="Our own scanner\'s last poll for this trip happened before it actually arrived, so we only had a mid-journey prediction. Trafikverket independently kept tracking this train and recorded a real post-arrival time, which this figure now uses instead.">✓ confirmed via Trafikverket</span>'
-          : (r.delayApprox ? ' approx.' : '')) +
-        '</span>';
+      : '<span class="chip ' + tierClass(r) + '">' + r.deductionPct + '%' + delayBasisFlagHtml(r) + '</span>';
     // Trafikverket-only gap-fill (src/trafikverket_merge.py): a real trip
     // GTFS-RT never saw, filled in from a second source -- but never
     // corroborated by Skånetrafiken's own feed. Never auto-recommended
