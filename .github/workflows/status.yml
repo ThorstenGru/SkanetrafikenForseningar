@@ -40,7 +40,7 @@ jobs:
       - name: Preserve the other pages (this workflow only rebuilds status.html)
         run: |
           mkdir -p pages_site
-          for f in index.html compensation.html claims.html claim_form_template.pdf; do
+          for f in index.html compensation.html claims.html mileage_claims.html claim_form_template.pdf; do
             curl -sfL "https://thorstengru.github.io/SkanetrafikenForseningar/$f" -o "pages_site/$f" || echo "warning: could not fetch $f, leaving it out of this deploy"
           done
 

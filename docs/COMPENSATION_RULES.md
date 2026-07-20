@@ -838,3 +838,45 @@ even when this project's own data already shows a clear, well-over-20-min
 delay — Skånetrafiken's own system may not agree yet, and an early filing
 can be auto-rejected on a number that later gets corrected upward once
 their system catches up.
+
+## 23. Confirmed mileage claims page (`mileage_claims.html`, added 2026-07-20)
+
+Requested by the user: "I would like to see all journeys where §4 is
+completely fulfilled, fulfilled by the book, and which are reasonable to
+claim (where Skånetrafikens handläggare says 'yes — that makes sense')."
+§4 itself (section 4 above, "alternative transport") only requires ≥20 min
+delay, a reasonable/minimized documented cost, and mutual exclusivity with
+price deduction — but "a handläggare says yes" needs the underlying DELAY
+ITSELF beyond reasonable doubt too, which this page's own filter goes
+further than §4's own text to guarantee.
+
+**`src/build_mileage_claims.py`** takes `compute_compensation()`'s full
+output (same pipeline `compensation.html`/`claims.html` already use — no
+re-derived logic) and keeps only rows passing all five checks:
+1. `calc == "eligible"` (not cancelled/bus_replaced).
+2. `delayBasis` is `final_arrival_confirmed` or
+   `final_confirmed_via_trafikverket` **only** — excluding
+   `final_stop_prediction_unconfirmed`, `max_delay_fallback`, and
+   `trafikverket_only` (see §22's own note on these five tiers — a data
+   audit that day found only 20-22% of "eligible" trips network-wide meet
+   this bar).
+3. `not recentTrip` — past Skånetrafiken's own confirmed 1-2 day
+   registration-lag window (§22).
+4. A real `distanceKm` on record (mileage is literally uncomputable
+   without one).
+5. The mileage amount itself (`carCash`) clears
+   `config.MIN_CLAIM_VALUE_SEK` — checked against the car amount
+   specifically, not `max(deductionVoucher, carCash)` like
+   `compute_compensation()`'s own general 150kr floor does, since this
+   page is only ever about the mileage path.
+
+Exclusion counts are logged (build output) and shown on the page itself
+(`payload.excluded`) — this project's own "no silent caps" principle, not
+a silent narrowing.
+
+Added to the shared nav (all 5 templates) and
+`.github/actions/build-content-pages/action.yml` (built every scan cycle,
+alongside the other three pages) and `status.yml`'s own page-preservation
+list. Taxi and other-operator reimbursement (also part of §4) are not
+tracked by this page — only own-car/motorcycle mileage, since that's the
+path this project has distance data for.

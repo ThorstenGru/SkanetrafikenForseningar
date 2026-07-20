@@ -41,6 +41,7 @@ PAGE_PATHS = [
     ("index.html", "Delay dashboard"),
     ("compensation.html", "Compensation estimate"),
     ("claims.html", "Reasonable claim chains"),
+    ("mileage_claims.html", "Confirmed mileage claims"),
 ]
 
 SITE_BASE = "https://thorstengru.github.io/SkanetrafikenForseningar/"

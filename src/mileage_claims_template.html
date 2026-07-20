@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skånetrafiken – Confirmed Mileage Claims</title>
+<style>
+  :root {
+    --bg: #dfe6ec;
+    --panel: #ffffff;
+    --panel-alt: #eef3f7;
+    --border: #c7d1da;
+    --ink: #263241;
+    --ink-dim: #5c6b7a;
+    --ink-faint: #94a3b3;
+    --amber: #c2660f;
+    --amber-bright: #e8872f;
+    --red: #d1453a;
+    --red-dim: #fdecea;
+    --green: #1f9d55;
+    --green-dim: #e6f7ec;
+    --display: "Bahnschrift SemiCondensed", "Bahnschrift", "Arial Narrow", "Segoe UI Semibold", sans-serif;
+    --body: "Segoe UI", system-ui, -apple-system, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--ink); font-family: var(--body); line-height: 1.45; -webkit-font-smoothing: antialiased; }
+  ::selection { background: var(--amber); color: #1a1000; }
+  a { color: var(--amber); }
+  .wrap { max-width: 1360px; margin: 0 auto; padding: 28px 24px 80px; display: flex; flex-direction: column; gap: 28px; }
+  header.top { display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--border); padding-bottom: 20px; }
+  .pagenav { display: flex; gap: 14px; font-family: var(--display); font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 4px; }
+  .pagenav a { color: var(--ink-dim); text-decoration: none; padding-bottom: 3px; border-bottom: 2px solid transparent; }
+  .pagenav a:hover { color: var(--amber); }
+  .pagenav a.current { color: var(--amber-bright); border-bottom-color: var(--amber); }
+  .eyebrow { font-family: var(--display); font-size: 12.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--green); font-weight: 600; }
+  h1 { font-family: var(--display); font-weight: 700; font-size: clamp(28px, 4vw, 40px); letter-spacing: 0.01em; margin: 2px 0 4px; color: #182430; text-wrap: balance; }
+  .meta-line { color: var(--ink-dim); font-size: 13.5px; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .disclaimer { background: var(--green-dim); border: 1px solid #b7e3c6; border-radius: 3px; padding: 14px 18px; font-size: 13px; color: #146c3a; line-height: 1.6; }
+  .disclaimer strong { color: #0f5a2f; }
+  .disclaimer a { color: #146c3a; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 3px; overflow: hidden; }
+  .stat { background: var(--panel); padding: 18px 18px 16px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .stat .label { font-family: var(--display); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-dim); font-weight: 600; }
+  .stat .value { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 28px; font-weight: 600; color: var(--green); letter-spacing: -0.01em; }
+  .stat .sub { font-size: 12px; color: var(--ink-faint); font-family: var(--mono); }
+  section { display: flex; flex-direction: column; gap: 12px; }
+  .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  h2 { font-family: var(--display); font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink); font-weight: 700; margin: 0; }
+  .hint { font-size: 12.5px; color: var(--ink-faint); }
+  .rules-panel { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 3px; overflow: hidden; font-size: 13px; }
+  .rules-panel .cell { background: var(--panel); padding: 12px 16px; }
+  .rules-panel dt { font-family: var(--display); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); margin: 0 0 4px; }
+  .rules-panel dd { margin: 0; font-family: var(--mono); color: var(--ink); font-variant-numeric: tabular-nums; }
+  .table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 3px; background: var(--panel); }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  thead th { position: sticky; top: 0; background: var(--panel-alt); text-align: left; font-family: var(--display); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; color: var(--ink-dim); padding: 10px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  tbody td { padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; color: var(--ink); }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: rgba(31, 157, 85, 0.05); }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .line-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; padding: 2px 7px; border-radius: 3px; background: var(--panel-alt); border: 1px solid var(--border); font-family: var(--mono); font-weight: 600; font-size: 12.5px; color: #182430; }
+  .checklist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--ink-dim); }
+  .checklist li::before { content: "✓ "; color: var(--green); font-weight: 700; }
+  .amount { font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 600; color: var(--green); }
+  .excluded-panel { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 3px; overflow: hidden; font-size: 13px; }
+  .excluded-panel .cell { background: var(--panel); padding: 12px 16px; }
+  .excluded-panel dt { font-family: var(--display); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); margin: 0 0 4px; }
+  .excluded-panel dd { margin: 0; font-family: var(--mono); color: var(--ink); font-variant-numeric: tabular-nums; }
+  footer { color: var(--ink-faint); font-size: 12px; border-top: 1px solid var(--border); padding-top: 16px; line-height: 1.7; }
+  :focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+  @media (max-width: 900px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <nav class="pagenav">
+      <a href="index.html">Delay history</a>
+      <a href="compensation.html">Compensation estimate</a>
+      <a href="claims.html">Reasonable claim chains</a>
+      <a href="mileage_claims.html" class="current">Confirmed mileage claims</a>
+      <a href="status.html">System status</a>
+    </nav>
+    <div class="eyebrow">Skånetrafiken · §4 alternative transport, strictly qualified</div>
+    <h1>Confirmed mileage claims</h1>
+    <div class="meta-line" id="metaLine">loading…</div>
+  </header>
+
+  <section>
+    <div class="disclaimer">
+      <strong>Not every eligible delay belongs here.</strong> This page only lists journeys where the delay itself is beyond reasonable doubt <em>and</em> §4 of the compensation rules ("alternative transport" — own car/mileage) is fully satisfied. compensation.html and claims.html show every network-wide delay illustratively, including unconfirmed predictions and fallback estimates — this page deliberately shows far fewer, on the theory that a Skånetrafiken case handler reviewing one of these should have no real basis to push back. Still not a filed application — verify each one against the Skånetrafiken app before submitting. See <a href="https://github.com/ThorstenGru/SkanetrafikenForseningar/blob/master/docs/COMPENSATION_RULES.md">COMPENSATION_RULES.md</a>.
+    </div>
+  </section>
+
+  <section class="stats" id="statStrip"></section>
+
+  <section>
+    <div class="section-head">
+      <h2>Why these are strict</h2>
+      <span class="hint">Every row on this page passes all five checks below — nothing is shown "just in case".</span>
+    </div>
+    <div class="rules-panel">
+      <div class="cell"><dt>Delay confirmed how</dt><dd>Real final arrival, or Trafikverket-corroborated</dd></div>
+      <div class="cell"><dt>Filed timing</dt><dd>Past Skånetrafiken's own 1-2 day registration-lag window</dd></div>
+      <div class="cell"><dt>Distance</dt><dd>A real distanceKm on record (mileage needs one)</dd></div>
+      <div class="cell"><dt>Mileage rate</dt><dd id="rateCell"></dd></div>
+      <div class="cell"><dt>Minimum worth filing</dt><dd id="minCell"></dd></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Excluded from this page</h2>
+      <span class="hint">Disclosed, not silently dropped — these still show on compensation.html/claims.html, just not here.</span>
+    </div>
+    <div class="excluded-panel" id="excludedPanel"></div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Qualified journeys</h2>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr>
+          <th scope="col">Date</th><th scope="col">Line</th><th scope="col">Trip</th>
+          <th scope="col">Route</th><th scope="col" class="num">Delay</th>
+          <th scope="col" class="num">Distance</th><th scope="col" class="num">Mileage</th>
+          <th scope="col">Why this qualifies</th>
+        </tr></thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    Rebuilt every scan cycle (src/build_mileage_claims.py), reusing the exact same delay-confirmation and Trafikverket-verification pipeline as compensation.html/claims.html — nothing here is re-derived or independently guessed. Own car/motorcycle mileage only (§4) — taxi and other-operator reimbursement follow the same 20-minute rule but aren't tracked by this project.
+  </footer>
+</div>
+
+<script type="application/json" id="raw-data">__DATA_JSON__</script>
+<script>
+(function () {
+  var payload = JSON.parse(document.getElementById('raw-data').textContent);
+  var rows = payload.rows || [];
+  var C = payload.constants || {};
+
+  function esc(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+    });
+  }
+  function fmtDate(yyyymmdd) {
+    if (!yyyymmdd) return '–';
+    var s = String(yyyymmdd);
+    return s.slice(0, 4) + '-' + s.slice(4, 6) + '-' + s.slice(6, 8);
+  }
+  function fmtSek(v) {
+    if (v === null || v === undefined) return '–';
+    return v.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' kr';
+  }
+  function fmtKm(km) {
+    if (!km) return '–';
+    return km.toLocaleString('sv-SE', { maximumFractionDigits: 1 }) + ' km';
+  }
+
+  document.getElementById('metaLine').textContent =
+    'Window ' + fmtDate(payload.windowStart) + ' .. ' + fmtDate(payload.windowEnd) + ' (full retention) · ' +
+    rows.length.toLocaleString('en-GB') + ' journey(s) strictly qualified · all times Sweden local time (Europe/Stockholm)';
+
+  document.getElementById('rateCell').textContent = (C.carRateSekPerKm || 2.5).toString().replace('.', ',') + ' kr/km, capped at ' + fmtSek(C.altTransportCapSek);
+  document.getElementById('minCell').textContent = fmtSek(C.minClaimValueSek) + ' or more';
+
+  var totalCash = 0;
+  rows.forEach(function (r) { totalCash += r.carCash || 0; });
+  var lines = {};
+  rows.forEach(function (r) { lines[r.line] = true; });
+  document.getElementById('statStrip').innerHTML = [
+    { label: 'Qualified journeys', value: rows.length, sub: 'strictly confirmed only' },
+    { label: 'Total mileage reimbursement', value: fmtSek(totalCash), sub: 'if all claimed' },
+    { label: 'Distinct lines', value: Object.keys(lines).length, sub: 'affected' },
+    { label: 'Confirmation basis', value: '2 of 5', sub: 'delayBasis tiers accepted' },
+  ].map(function (s) {
+    return '<div class="stat"><div class="label">' + esc(s.label) + '</div><div class="value">' + s.value + '</div><div class="sub">' + esc(s.sub) + '</div></div>';
+  }).join('');
+
+  var EXCLUDED_LABELS = {
+    not_eligible: 'Not eligible at all (cancelled/bus-replaced/under 20 min)',
+    weak_delay_basis: 'Unconfirmed prediction, fallback, or single-source only',
+    recent_trip: 'Still inside the 1-2 day registration-lag window',
+    no_distance: 'No distance on record — mileage uncomputable',
+    below_150kr: 'Mileage amount itself under ' + fmtSek(C.minClaimValueSek),
+  };
+  var excluded = payload.excluded || {};
+  document.getElementById('excludedPanel').innerHTML = Object.keys(EXCLUDED_LABELS).map(function (k) {
+    return '<div class="cell"><dt>' + esc(EXCLUDED_LABELS[k]) + '</dt><dd>' + (excluded[k] || 0).toLocaleString('en-GB') + '</dd></div>';
+  }).join('');
+
+  function basisLabel(basis) {
+    return basis === 'final_confirmed_via_trafikverket'
+      ? 'Trafikverket-corroborated arrival'
+      : 'GTFS-RT confirmed arrival';
+  }
+
+  document.getElementById('tableBody').innerHTML = rows.map(function (r) {
+    var checklist = [
+      basisLabel(r.delayBasis) + ' (' + (r.delayUsedMin != null ? r.delayUsedMin.toFixed(1) : '–') + ' min ≥ ' + (C.minDelayMin || 20) + ')',
+      'Past the registration-lag window',
+      fmtKm(r.distanceKm) + ' on record',
+      fmtSek(r.carCash) + ' ≥ ' + fmtSek(C.minClaimValueSek),
+    ];
+    return '<tr>' +
+      '<td class="num">' + esc(fmtDate(r.date)) + '</td>' +
+      '<td><span class="line-badge">' + esc(r.line) + '</span></td>' +
+      '<td class="num">' + esc(r.tripNumber || '–') + '</td>' +
+      '<td>' + esc(r.originName || '?') + ' → ' + esc(r.dest || '?') + '</td>' +
+      '<td class="num">' + (r.delayUsedMin != null ? r.delayUsedMin.toFixed(1) + ' min' : '–') + '</td>' +
+      '<td class="num">' + esc(fmtKm(r.distanceKm)) + '</td>' +
+      '<td class="num amount">' + esc(fmtSek(r.carCash)) + '</td>' +
+      '<td><ul class="checklist">' + checklist.map(function (c) { return '<li>' + esc(c) + '</li>'; }).join('') + '</ul></td>' +
+      '</tr>';
+  }).join('') || '<tr><td colspan="8"><span class="hint">No journeys currently pass every check.</span></td></tr>';
+})();
+</script>
+</body>
+</html>
