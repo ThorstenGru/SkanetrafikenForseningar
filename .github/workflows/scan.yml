@@ -97,6 +97,20 @@ jobs:
           supabase-anon-key: ${{ secrets.SUPABASE_ANON_KEY }}
           claim-tracking-passphrase: ${{ secrets.CLAIM_TRACKING_PASSPHRASE }}
 
+      # Persists, every run, how much of the current data actually rests on
+      # confirmed evidence vs. an unconfirmed/fallback number, plus basic
+      # structural consistency checks -- requested by the user 2026-07-20,
+      # see data_quality_check.py's own docstring and migration
+      # 018_data_quality_runs.sql. continue-on-error: this is a reporting
+      # pass over data the main pipeline already committed -- its own
+      # failure must never take down the scan/build/deploy pipeline.
+      - name: Data quality check
+        continue-on-error: true
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SOMMARBILJETT_PURCHASED_AT: ${{ secrets.SOMMARBILJETT_PURCHASED_AT }}
+        run: python src/data_quality_check.py
+
       # Re-evaluates the hash *now*, after a possible refresh above -- if
       # scan.py rebuilt the static index this run, this saves under a new
       # key reflecting the fresh timetable; otherwise the key matches what

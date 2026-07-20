@@ -224,7 +224,7 @@ def main():
     cur = conn.cursor()
     try:
         rows = fetch_detail_rows(cur, start_date, end_date, None)
-        rows = merge_trafikverket(rows, cur, start_date, end_date)
+        rows, _tv_stats = merge_trafikverket(rows, cur, start_date, end_date)
     finally:
         cur.close()
         conn.close()

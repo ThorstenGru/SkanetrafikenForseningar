@@ -380,17 +380,24 @@ def confirm_stale_finals(rows, trip_number_index, stop_names, stop_to_sig, name_
 
 
 def merge_trafikverket(rows, cur, start_date, end_date):
-    """Top-level entry point for build_compensation.py / build_claims.py.
-    Degrades gracefully (returns `rows` unchanged) on ANY failure -- unlike
-    scan_trafikverket.py (which has its own `continue-on-error` step in
-    scan.yml), build_compensation.py/build_claims.py are NOT
-    continue-on-error in the workflow: a raised exception here would take
-    down claims.html/compensation.html generation entirely for a still-new,
-    less-tested integration that's explicitly optional. Deliberately a
-    broad catch (not just psycopg2.Error/sqlite3.Error) for that reason --
-    a bug in this module's own logic should be visible in Action logs, not
+    """Top-level entry point for build_compensation.py / build_claims.py /
+    data_quality_check.py. Degrades gracefully (returns `rows` unchanged,
+    stats all zero/None) on ANY failure -- unlike scan_trafikverket.py
+    (which has its own `continue-on-error` step in scan.yml),
+    build_compensation.py/build_claims.py are NOT continue-on-error in the
+    workflow: a raised exception here would take down claims.html/
+    compensation.html generation entirely for a still-new, less-tested
+    integration that's explicitly optional. Deliberately a broad catch
+    (not just psycopg2.Error/sqlite3.Error) for that reason -- a bug in
+    this module's own logic should be visible in Action logs, not
     invisible, but it must never be fatal to the page build. See
-    docs/TRAFIKVERKET_INTEGRATION.md."""
+    docs/TRAFIKVERKET_INTEGRATION.md.
+
+    Returns (rows, stats) -- stats is {"confirmed", "gapfilled", "skipped"}
+    (None values on failure). Added 2026-07-20 so data_quality_check.py can
+    persist these same numbers (a queryable trail, not just a print() line
+    in one Action run's own log) without duplicating this module's own
+    logic -- see migration 018_data_quality_runs.sql."""
     try:
         trip_number_index, stop_names = _load_static_data()
         _sig_to_stop, stop_to_sig = _load_location_signature_map(cur)
@@ -405,10 +412,10 @@ def merge_trafikverket(rows, cur, start_date, end_date):
         import traceback
         traceback.print_exc()
         print("Trafikverket merge skipped (%s): %s" % (type(exc).__name__, exc))
-        return rows
+        return rows, {"confirmed": None, "gapfilled": None, "skipped": None}
     if confirmed:
         print("Trafikverket confirmed %d previously-unconfirmed final-stop prediction(s) with a later post-arrival observation" % confirmed)
     if gapfill_rows or skipped:
         print("Trafikverket gap-fill: %d trip(s) added (GTFS-RT had zero data), %d skipped (ambiguous or unmatched)" % (
             len(gapfill_rows), skipped))
-    return rows + gapfill_rows
+    return rows + gapfill_rows, {"confirmed": confirmed, "gapfilled": len(gapfill_rows), "skipped": skipped}

@@ -103,6 +103,14 @@
 
   <section>
     <div class="section-head">
+      <h2>Data quality</h2>
+      <span class="hint">How much of the current delay data rests on confirmed evidence vs. an unconfirmed/fallback number, plus structural consistency checks — recomputed every scan (data_quality_check.py). Reused, never re-derived: the same _delay_basis() classification build_compensation.py itself uses.</span>
+    </div>
+    <div class="card" id="dataQualityCard"></div>
+  </section>
+
+  <section>
+    <div class="section-head">
       <h2>Static GTFS index</h2>
       <span class="hint">Freshness only — reads the committed sqlite file directly, never re-calls Trafiklab's static API (60 req/30-day quota).</span>
     </div>
@@ -181,6 +189,38 @@
       var label = p.ok ? 'reachable' : 'unreachable';
       return '<tr><td class="row-label">' + dot(p.ok, label) + '<a href="' + esc(p.path) + '">' + esc(p.label) + '</a></td><td class="num">' + esc(p.statusCode || 'no response') + '</td></tr>';
     }).join('');
+
+  var dq = payload.dataQuality;
+  if (!dq) {
+    document.getElementById('dataQualityCard').innerHTML = '<span class="hint">Not available yet.</span>';
+  } else if (dq.error && dq.finalStopRowsTotal == null) {
+    document.getElementById('dataQualityCard').innerHTML = '<div class="err-text">' + esc(dq.error) + '</div>';
+  } else {
+    var total = dq.finalStopRowsTotal || 0;
+    var pct = function (n) { return total ? Math.round(100 * (n || 0) / total) + '%' : '–'; };
+    var sv = dq.structuralViolations || {};
+    var svTotal = (sv.orphanedFinalStopTrips || 0) + (sv.arrivalAfterDepartureRows || 0) +
+      (sv.implausibleDelayRows || 0) + (sv.cancelledAndDelayedTrips || 0);
+    var html = '<div class="hint" style="margin-bottom:10px;">Last checked ' + esc(fmtWhen(dq.runAt)) +
+      ' <span class="hint">(' + ago(dq.runAt) + ')</span>, ' + total.toLocaleString('en-GB') + ' trip(s) considered.</div>';
+    html += '<table>' +
+      '<tr><td>Unconfirmed prediction <span class="hint">(final stop polled before it actually arrived)</span></td>' +
+        '<td class="num">' + (dq.finalStopRowsUnconfirmed || 0).toLocaleString('en-GB') + ' (' + pct(dq.finalStopRowsUnconfirmed) + ')</td></tr>' +
+      '<tr><td>Confirmed via Trafikverket <span class="hint">(second source, this run)</span></td>' +
+        '<td class="num">' + (dq.confirmedViaTrafikverketNow || 0).toLocaleString('en-GB') + ' (' + pct(dq.confirmedViaTrafikverketNow) + ')</td></tr>' +
+      '<tr><td>Station passed late, final unknown <span class="hint">(no final-stop observation at all)</span></td>' +
+        '<td class="num">' + (dq.maxDelayFallbackTrips || 0).toLocaleString('en-GB') + ' (' + pct(dq.maxDelayFallbackTrips) + ')</td></tr>' +
+      '</table>';
+    html += '<div class="hint" style="margin-top:14px;margin-bottom:6px;">Structural consistency checks (0 is healthy):</div>';
+    html += '<table>' +
+      '<tr><td class="row-label">' + dot(sv.orphanedFinalStopTrips === 0, null) + 'Final stop with no matching origin</td><td class="num">' + esc(sv.orphanedFinalStopTrips) + '</td></tr>' +
+      '<tr><td class="row-label">' + dot(sv.arrivalAfterDepartureRows === 0, null) + 'Departure recorded before arrival</td><td class="num">' + esc(sv.arrivalAfterDepartureRows) + '</td></tr>' +
+      '<tr><td class="row-label">' + dot(sv.implausibleDelayRows === 0, null) + 'Implausible delay (&gt;24h)</td><td class="num">' + esc(sv.implausibleDelayRows) + '</td></tr>' +
+      '<tr><td class="row-label">' + dot(sv.cancelledAndDelayedTrips === 0, null) + 'Marked both cancelled and delayed</td><td class="num">' + esc(sv.cancelledAndDelayedTrips) + '</td></tr>' +
+      '</table>';
+    if (dq.error) html += '<div class="err-text" style="margin-top:10px;">' + esc(dq.error) + '</div>';
+    document.getElementById('dataQualityCard').innerHTML = html;
+  }
 
   var si = payload.staticIndex;
   document.getElementById('staticCard').innerHTML = si && si.builtAt

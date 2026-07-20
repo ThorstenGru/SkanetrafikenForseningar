@@ -137,6 +137,47 @@ def check_pages():
     return out
 
 
+def data_quality_info():
+    """Latest data_quality_runs row -- see migration 018_data_quality_runs.sql
+    and data_quality_check.py for the full background. Own short-lived
+    connection (like static_index_info() below), independent of
+    probe_database()'s own -- this page must still say something useful
+    about everything else if this one query happens to fail."""
+    try:
+        conn = psycopg2.connect(config.database_url(), connect_timeout=DB_PROBE_TIMEOUT_SEC)
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT run_at, final_stop_rows_total, final_stop_rows_unconfirmed,
+                      confirmed_via_trafikverket_now, max_delay_fallback_trips,
+                      orphaned_final_stop_trips, arrival_after_departure_rows,
+                      implausible_delay_rows, cancelled_and_delayed_trips, error
+               FROM data_quality_runs ORDER BY run_at DESC LIMIT 1"""
+        )
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if not row:
+            return None
+        (run_at, total, unconfirmed, tv_confirmed, fallback,
+         orphaned, arr_after_dep, implausible, cancelled_and_delayed, error) = row
+        return {
+            "runAt": run_at.isoformat(),
+            "finalStopRowsTotal": total,
+            "finalStopRowsUnconfirmed": unconfirmed,
+            "confirmedViaTrafikverketNow": tv_confirmed,
+            "maxDelayFallbackTrips": fallback,
+            "structuralViolations": {
+                "orphanedFinalStopTrips": orphaned,
+                "arrivalAfterDepartureRows": arr_after_dep,
+                "implausibleDelayRows": implausible,
+                "cancelledAndDelayedTrips": cancelled_and_delayed,
+            },
+            "error": error,
+        }
+    except Exception as exc:
+        return {"error": str(exc)[:300]}
+
+
 def static_index_info():
     path = config.STATIC_INDEX_PATH
     if not os.path.exists(path):
@@ -165,6 +206,7 @@ def main():
         "workflows": check_workflows(),
         "pages": check_pages(),
         "staticIndex": static_index_info(),
+        "dataQuality": data_quality_info(),
     }
 
     with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
