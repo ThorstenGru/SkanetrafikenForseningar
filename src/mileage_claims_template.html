@@ -92,7 +92,7 @@
 
   <section>
     <div class="disclaimer">
-      <strong>Not every eligible delay belongs here.</strong> This page only lists journeys where the delay itself is beyond reasonable doubt <em>and</em> §4 of the compensation rules ("alternative transport" — own car/mileage) is fully satisfied. compensation.html and claims.html show every network-wide delay illustratively, including unconfirmed predictions and fallback estimates — this page deliberately shows far fewer, on the theory that a Skånetrafiken case handler reviewing one of these should have no real basis to push back. Still not a filed application — verify each one against the Skånetrafiken app before submitting. See <a href="https://github.com/ThorstenGru/SkanetrafikenForseningar/blob/master/docs/COMPENSATION_RULES.md">COMPENSATION_RULES.md</a>.
+      <strong>This page is about foreseeability, not just a confirmed delay.</strong> §4's own wording is "you are (<em>or risk being</em>) at least 20 minutes late... and choose to drive yourself instead" — a test of what was already knowable <em>before boarding</em>, not something only measurable after the fact. A journey where the delay only became apparent once already underway is §3 territory (price deduction for enduring it) — the rider never had the chance to decide to drive instead. So every row here has both a confirmed bad outcome <em>and</em> a real, matched disruption notice that was already active before the trip's own scheduled departure. compensation.html and claims.html show every network-wide delay illustratively, including ones that don't meet this bar — this page deliberately shows far fewer. Still not a filed application — verify each one against the Skånetrafiken app before submitting. See <a href="https://github.com/ThorstenGru/SkanetrafikenForseningar/blob/master/docs/COMPENSATION_RULES.md">COMPENSATION_RULES.md</a>.
     </div>
   </section>
 
@@ -101,9 +101,10 @@
   <section>
     <div class="section-head">
       <h2>Why these are strict</h2>
-      <span class="hint">Every row on this page passes all five checks below — nothing is shown "just in case".</span>
+      <span class="hint">Every row on this page passes all six checks below — nothing is shown "just in case".</span>
     </div>
     <div class="rules-panel">
+      <div class="cell"><dt>Foreseeable how</dt><dd>A real disruption notice, active before scheduled departure</dd></div>
       <div class="cell"><dt>Delay confirmed how</dt><dd>Real final arrival, or Trafikverket-corroborated</dd></div>
       <div class="cell"><dt>Filed timing</dt><dd>Past Skånetrafiken's own 1-2 day registration-lag window</dd></div>
       <div class="cell"><dt>Distance</dt><dd>A real distanceKm on record (mileage needs one)</dd></div>
@@ -192,6 +193,7 @@
   var EXCLUDED_LABELS = {
     not_eligible: 'Not eligible at all (cancelled/bus-replaced/under 20 min)',
     weak_delay_basis: 'Unconfirmed prediction, fallback, or single-source only',
+    not_foreseeable: 'No disruption known before scheduled departure — discovered mid-journey, not before boarding',
     recent_trip: 'Still inside the 1-2 day registration-lag window',
     no_distance: 'No distance on record — mileage uncomputable',
     below_150kr: 'Mileage amount itself under ' + fmtSek(C.minClaimValueSek),
@@ -208,7 +210,9 @@
   }
 
   document.getElementById('tableBody').innerHTML = rows.map(function (r) {
+    var reasonSnippet = r.reason ? r.reason.slice(0, 90) + (r.reason.length > 90 ? '…' : '') : '–';
     var checklist = [
+      'Known before departure: ' + reasonSnippet,
       basisLabel(r.delayBasis) + ' (' + (r.delayUsedMin != null ? r.delayUsedMin.toFixed(1) : '–') + ' min ≥ ' + (C.minDelayMin || 20) + ')',
       'Past the registration-lag window',
       fmtKm(r.distanceKm) + ' on record',

@@ -151,12 +151,21 @@ def _trip_time_window(stops, day_start):
 
 
 def best_reason(lookups, trip_id, route_id, stop_id, day_start, day_end):
+    """Returns (description, active_period_start) -- the start timestamp is
+    exposed (2026-07-20, for mileage_claims.html's own foreseeability check:
+    see build_mileage_claims.py) so a caller can tell whether the matched
+    alert was already active before this trip's own scheduled departure
+    (known in advance -- §4's "risk being... late" scenario) or only
+    started sometime after (discovered mid-journey, not something a rider
+    could have decided to drive instead over before ever boarding).
+    (None, None) if nothing matched -- unchanged behavior for every other
+    caller, which only ever used the description half anyway."""
     by_trip, by_route, by_stop = lookups
     for d, key in ((by_trip, trip_id), (by_stop, stop_id), (by_route, route_id)):
         for desc, start, end in d.get(key, ()):
             if _alert_active_on(start, end, day_start, day_end):
-                return desc.strip()
-    return None
+                return desc.strip(), start
+    return None, None
 
 
 def classify_trip(final_relationship, final_delay_sec, is_cancelled):
@@ -347,12 +356,30 @@ def fetch_detail_rows(cur, start_date, end_date, single_date):
     for (_trip_id_key, trip_date), t in trips.items():
         calendar_day_start = datetime.combine(trip_date, datetime.min.time(), tzinfo=config.LOCAL_TZ)
         day_start, day_end = _trip_time_window(t["stops"], calendar_day_start)
-        reason = best_reason(lookups, t["trip"], t["route_id"], None, day_start, day_end)
+        reason, reason_start = best_reason(lookups, t["trip"], t["route_id"], None, day_start, day_end)
         if reason is None:
             for sid in t["stop_ids"]:
-                reason = best_reason(lookups, t["trip"], t["route_id"], sid, day_start, day_end)
+                reason, reason_start = best_reason(lookups, t["trip"], t["route_id"], sid, day_start, day_end)
                 if reason:
                     break
+
+        # Was this specific disruption already known BEFORE the trip's own
+        # scheduled origin departure -- i.e. could a rider have decided to
+        # drive instead before ever boarding, rather than only discovering
+        # the problem mid-journey? Added 2026-07-20 for
+        # build_mileage_claims.py's own foreseeability requirement (§4:
+        # "risk being... late", not just a delay confirmed after the fact).
+        # No start bound at all (an alert with an open/unbounded start,
+        # rare but real -- see _alert_active_on()'s own note) is treated as
+        # NOT confirmable, the conservative side, same principle as the
+        # platsbrist/hiss false-positive lessons: don't claim foreseeability
+        # this project can't actually back up.
+        sorted_stops = sorted(t["stops"], key=lambda s: s["seq"] if s["seq"] is not None else 0)
+        origin_sched_iso = sorted_stops[0]["schedTimeIso"] if sorted_stops else None
+        reason_known_before_departure = bool(
+            reason_start and origin_sched_iso and reason_start <= datetime.fromisoformat(origin_sched_iso)
+        )
+
         out.append({
             "trip": t["trip"], "date": t["date"], "line": t["line"], "vehicleType": t["vehicleType"],
             "tripNumber": t["tripNumber"], "dest": t["dest"], "distanceKm": t["distanceKm"],
@@ -361,7 +388,8 @@ def fetch_detail_rows(cur, start_date, end_date, single_date):
             "maxDelayMin": round(t["max_delay_sec"] / 60, 1) if t["max_delay_sec"] is not None else None,
             "finalStopUnconfirmed": t["final_stop_unconfirmed"],
             "reason": reason,
-            "stops": sorted(t["stops"], key=lambda s: s["seq"] if s["seq"] is not None else 0),
+            "reasonKnownBeforeDeparture": reason_known_before_departure,
+            "stops": sorted_stops,
             "firstSeen": t["firstSeen"].isoformat(), "lastSeen": t["lastSeen"].isoformat(), "polls": t["polls"],
         })
     return out

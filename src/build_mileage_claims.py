@@ -6,19 +6,36 @@ alternative transport" -- the own-car/mileage reimbursement path).
 Requested by the user 2026-07-20: "I would like to see all journeys where
 §4 is completely fulfilled, fulfilled by the book, and which are reasonable
 to claim (where Skånetrafikens handläggare says 'yes -- that makes
-sense')." §4 itself only requires >=20 min delay, a reasonable/minimized
-documented cost, and mutual exclusivity with price deduction -- but "a
-handläggare says yes" needs the underlying DELAY ITSELF to be beyond
-reasonable doubt too, which is where this page goes further than §4's own
-text: it only keeps rows whose delayBasis is the strongest evidence tier
-this project has (a genuinely confirmed final arrival, from GTFS-RT itself
-or corroborated by Trafikverket) -- excluding unconfirmed predictions,
-"station passed late" intermediate-only fallbacks, and single-source
-Trafikverket-only rows, all of which are exactly the kind of number a case
-handler could reasonably push back on. Also excludes recentTrip (still
-inside Skånetrafiken's own 1-2 day registration-lag window -- see
-config.SKANETRAFIKEN_REGISTRATION_LAG_DAYS) and anything without a real
-distanceKm (mileage is literally uncomputable without one).
+sense')." §4's own text reads: "Applies if you are (or **risk being**) at
+least 20 minutes late... and choose to drive yourself instead." That is a
+FORESEEABILITY test, not a retroactive one -- the user's own follow-up
+correction, same day: this page's focus must be on whether it was already
+obvious, BEFORE BOARDING, that the journey would be badly delayed, not
+merely that it turned out that way once measured after the fact. A
+passenger who boards a train that only becomes badly delayed once
+underway never had the chance to "choose to drive instead" at all -- that
+scenario is really §3 (price deduction for enduring the delay), not §4.
+
+So this page requires, in addition to a confirmed bad outcome:
+1. A real, matched alert/deviation (`reason` is not empty) -- no known
+   reason at all means nothing was foreseeable, it just turned out badly.
+2. That alert was already active BEFORE the trip's own scheduled origin
+   departure (`reasonKnownBeforeDeparture`, computed in
+   build_dashboard.py's `fetch_detail_rows()`) -- i.e. a rider checking
+   before leaving home would already have seen it, not discovered it
+   mid-journey.
+3. The eventual outcome still needs to be genuinely confirmed >=20 min
+   (delayBasis in the strongest tier) -- foreseeing trouble that didn't
+   actually reach the threshold wouldn't make driving "reasonable" by the
+   book either.
+
+Excludes unconfirmed predictions, "station passed late" intermediate-only
+fallbacks, and single-source Trafikverket-only rows (a data audit found
+only 20-22% of "eligible" trips network-wide meet the confirmed-outcome
+bar alone -- before even applying the foreseeability test). Also excludes
+recentTrip (still inside Skånetrafiken's own 1-2 day registration-lag
+window -- see config.SKANETRAFIKEN_REGISTRATION_LAG_DAYS) and anything
+without a real distanceKm (mileage is literally uncomputable without one).
 
 Usage:
     python src/build_mileage_claims.py                # full 45-day retention window
@@ -63,13 +80,24 @@ def strictly_qualified_mileage_claims(comp_rows):
     own "no silent caps" principle (see e.g. build_compensation.py's own
     low_value_skipped count)."""
     qualified = []
-    excluded = {"not_eligible": 0, "weak_delay_basis": 0, "recent_trip": 0, "no_distance": 0, "below_150kr": 0}
+    excluded = {
+        "not_eligible": 0, "weak_delay_basis": 0, "recent_trip": 0, "no_distance": 0, "below_150kr": 0,
+        "not_foreseeable": 0,
+    }
     for r in comp_rows:
         if r["calc"] != "eligible":
             excluded["not_eligible"] += 1
             continue
         if r.get("delayBasis") not in STRICT_DELAY_BASES:
             excluded["weak_delay_basis"] += 1
+            continue
+        # §4's own text: "risk being... late" -- a foreseeability test, not
+        # a retroactive one. No reason at all, or a reason that only
+        # started after this trip's own scheduled departure, means nothing
+        # was known before boarding -- that's §3 territory (endured a
+        # delay), not §4 (chose to drive instead of even trying).
+        if not r.get("reason") or not r.get("reasonKnownBeforeDeparture"):
+            excluded["not_foreseeable"] += 1
             continue
         if r.get("recentTrip"):
             excluded["recent_trip"] += 1

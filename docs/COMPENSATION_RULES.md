@@ -844,27 +844,47 @@ their system catches up.
 Requested by the user: "I would like to see all journeys where §4 is
 completely fulfilled, fulfilled by the book, and which are reasonable to
 claim (where Skånetrafikens handläggare says 'yes — that makes sense')."
-§4 itself (section 4 above, "alternative transport") only requires ≥20 min
-delay, a reasonable/minimized documented cost, and mutual exclusivity with
-price deduction — but "a handläggare says yes" needs the underlying DELAY
-ITSELF beyond reasonable doubt too, which this page's own filter goes
-further than §4's own text to guarantee.
+
+**Corrected same day, by the user's own follow-up.** The first version
+filtered purely on a confirmed *retroactive* delay. But §4's own text is a
+foreseeability test: "Applies if you are (**or risk being**) at least 20
+minutes late... and choose to drive yourself instead." That describes a
+decision made *before boarding* — a rider who already knows (from an
+active disruption notice) that the journey is heading for serious trouble
+and drives instead of even trying. A rider who boards and only discovers
+the delay once already underway never had that choice to make — that's §3
+territory (price deduction for enduring a delay), not §4. So this page's
+filter checks foreseeability explicitly, not just outcome.
+
+**`build_dashboard.py`'s `best_reason()`** now returns
+`(description, active_period_start)` instead of just the description
+(the only caller, `fetch_detail_rows()`, is updated accordingly) — exposing
+when the matched alert/deviation actually started. `fetch_detail_rows()`
+computes a new field, **`reasonKnownBeforeDeparture`**: true only when a
+matched reason's own `active_period_start` is at or before the trip's own
+scheduled origin departure. An alert with no start bound at all (rare, but
+real — see `_alert_active_on()`) is treated as NOT confirmable, the
+conservative side, same principle as the platsbrist/hiss lessons (§after
+21 in this doc's own history) — don't claim foreseeability this project
+can't actually back up with a timestamp.
 
 **`src/build_mileage_claims.py`** takes `compute_compensation()`'s full
 output (same pipeline `compensation.html`/`claims.html` already use — no
-re-derived logic) and keeps only rows passing all five checks:
+re-derived logic) and keeps only rows passing all six checks:
 1. `calc == "eligible"` (not cancelled/bus_replaced).
-2. `delayBasis` is `final_arrival_confirmed` or
+2. A real, matched `reason` exists **and** `reasonKnownBeforeDeparture` is
+   true — the foreseeability test above.
+3. `delayBasis` is `final_arrival_confirmed` or
    `final_confirmed_via_trafikverket` **only** — excluding
    `final_stop_prediction_unconfirmed`, `max_delay_fallback`, and
    `trafikverket_only` (see §22's own note on these five tiers — a data
    audit that day found only 20-22% of "eligible" trips network-wide meet
-   this bar).
-3. `not recentTrip` — past Skånetrafiken's own confirmed 1-2 day
+   this bar, before even applying the foreseeability test on top).
+4. `not recentTrip` — past Skånetrafiken's own confirmed 1-2 day
    registration-lag window (§22).
-4. A real `distanceKm` on record (mileage is literally uncomputable
+5. A real `distanceKm` on record (mileage is literally uncomputable
    without one).
-5. The mileage amount itself (`carCash`) clears
+6. The mileage amount itself (`carCash`) clears
    `config.MIN_CLAIM_VALUE_SEK` — checked against the car amount
    specifically, not `max(deductionVoucher, carCash)` like
    `compute_compensation()`'s own general 150kr floor does, since this
