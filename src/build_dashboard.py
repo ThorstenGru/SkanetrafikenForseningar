@@ -44,7 +44,16 @@ import db
 # docstring) -- only the misleading TEXT shown as "why?". Excluded at the
 # lookup-build stage so it can never win the fallback, regardless of how
 # specific/unspecific the alternative candidates are.
-_DELAY_IRRELEVANT_ALERT_RE = re.compile(r"platsbrist", re.IGNORECASE)
+#
+# "hiss" (elevator) added same day, same user, same pattern: checked
+# directly -- "Hissen ... är ur funktion" (elevator out of order) is a real,
+# common Trafikverket/Skånetrafiken alert (cause TECHNICAL_PROBLEM, e.g.
+# "Hissen från södra änden av perrongen på spår 1-2 på Helsingborg C är ur
+# funktion"), an accessibility/facility notice with nothing to do with
+# train timing, currently the displayed reason for 179 real eligible delays
+# (29-67 min). \b word-boundary on both terms to avoid over-matching inside
+# an unrelated longer word.
+_DELAY_IRRELEVANT_ALERT_RE = re.compile(r"\b(platsbrist|hiss(en)?)\b", re.IGNORECASE)
 
 
 def _is_delay_irrelevant_alert(desc):
