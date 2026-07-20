@@ -51,9 +51,15 @@ import db
 # "Hissen från södra änden av perrongen på spår 1-2 på Helsingborg C är ur
 # funktion"), an accessibility/facility notice with nothing to do with
 # train timing, currently the displayed reason for 179 real eligible delays
-# (29-67 min). \b word-boundary on both terms to avoid over-matching inside
-# an unrelated longer word.
-_DELAY_IRRELEVANT_ALERT_RE = re.compile(r"\b(platsbrist|hiss(en)?)\b", re.IGNORECASE)
+# (29-67 min). First version required a trailing \b right after "hiss"/
+# "hissen", which missed real cases with a different Swedish inflection
+# ("Hissarna" -- "the elevators", plural definite) -- found live, 28 rows
+# still slipping through after deploying. Matching "hiss" as a word-START
+# prefix only (leading \b, no trailing one) catches hiss/hissen/hissar/
+# hissarna/hissarnas etc. in one pattern; no common Swedish word unrelated
+# to lifting/elevators starts with "hiss", so this isn't a false-positive
+# risk the way a bare substring match (no leading \b at all) would be.
+_DELAY_IRRELEVANT_ALERT_RE = re.compile(r"\b(platsbrist|hiss)", re.IGNORECASE)
 
 
 def _is_delay_irrelevant_alert(desc):
