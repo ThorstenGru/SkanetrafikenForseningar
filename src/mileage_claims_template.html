@@ -44,7 +44,10 @@
   .disclaimer strong { color: #0f5a2f; }
   .disclaimer a { color: #146c3a; }
   .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 3px; overflow: hidden; }
-  .stat { background: var(--panel); padding: 18px 18px 16px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .stat { background: var(--panel); padding: 18px 18px 16px; display: flex; flex-direction: column; gap: 6px; min-width: 0; cursor: help; }
+  [title] { text-decoration-skip-ink: none; }
+  dt[title], .rules-panel dt, .excluded-panel dt { cursor: help; border-bottom: 1px dotted var(--ink-faint); display: inline-block; }
+  th[title] { cursor: help; border-bottom: 1px dotted var(--ink-faint); }
   .stat .label { font-family: var(--display); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-dim); font-weight: 600; }
   .stat .value { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 28px; font-weight: 600; color: var(--green); letter-spacing: -0.01em; }
   .stat .sub { font-size: 12px; color: var(--ink-faint); font-family: var(--mono); }
@@ -145,19 +148,19 @@
       <span class="hint">Every row on this page passes all six checks below — nothing is shown "just in case".</span>
     </div>
     <div class="rules-panel">
-      <div class="cell"><dt>Foreseeable how</dt><dd>A real disruption notice, active before scheduled departure</dd></div>
-      <div class="cell"><dt>Delay confirmed how</dt><dd>Real final arrival, or Trafikverket-corroborated</dd></div>
-      <div class="cell"><dt>Filed timing</dt><dd>Past Skånetrafiken's own 1-2 day registration-lag window</dd></div>
-      <div class="cell"><dt>Distance</dt><dd>A real distanceKm on record (mileage needs one)</dd></div>
-      <div class="cell"><dt>Mileage rate</dt><dd id="rateCell"></dd></div>
-      <div class="cell"><dt>Minimum worth filing</dt><dd id="minCell"></dd></div>
+      <div class="cell"><dt title="§4: 'you are (or risk being) at least 20 minutes late... and choose to drive yourself instead' -- a rider could only make that choice if the disruption was already visible before boarding, not discovered mid-journey.">Foreseeable how</dt><dd>A real disruption notice, active before scheduled departure</dd></div>
+      <div class="cell"><dt title="Only the two strongest evidence tiers this project has: either our own scanner directly observed the real post-arrival time, or Trafikverket independently corroborated it. Everything weaker (a live mid-journey prediction never confirmed, a fallback from an intermediate stop, or Trafikverket as the sole uncorroborated source) is excluded -- see 'weak_delay_basis' below.">Delay confirmed how</dt><dd>Real final arrival, or Trafikverket-corroborated</dd></div>
+      <div class="cell"><dt title="Confirmed directly by a Skånetrafiken support agent (chat, 2026-07-09): their own system can take 1-2 days after a trip to finish registering its delay. A real claim was auto-rejected because their system still showed a lower number at filing time. Trips younger than that window are excluded here -- see 'recent_trip' below.">Filed timing</dt><dd>Past Skånetrafiken's own 1-2 day registration-lag window</dd></div>
+      <div class="cell"><dt title="Mileage reimbursement is a per-km amount -- with no distance on record for the trip, there's nothing to multiply the rate by, so no figure can be shown at all.">Distance</dt><dd>A real distanceKm on record (mileage needs one)</dd></div>
+      <div class="cell"><dt title="The Swedish Tax Agency's own tax-free mileage rate, per §4 -- this project doesn't set this number, it's read from Skånetrafiken's published terms.">Mileage rate</dt><dd id="rateCell"></dd></div>
+      <div class="cell"><dt title="A claim worth less than this isn't worth the effort of filing -- checked against the mileage amount specifically (carCash), not the higher of two possible payout paths like compensation.html's own general floor does.">Minimum worth filing</dt><dd id="minCell"></dd></div>
     </div>
   </section>
 
   <section>
     <div class="section-head">
       <h2>Excluded from this page</h2>
-      <span class="hint">Disclosed, not silently dropped — these still show on compensation.html/claims.html, just not here.</span>
+      <span class="hint" title="Every excluded trip is still counted here, never silently dropped -- this project's own principle: a narrower list should say exactly how much it narrowed, not just present a shorter number with no explanation.">Disclosed, not silently dropped — these still show on compensation.html/claims.html, just not here.</span>
     </div>
     <div class="excluded-panel" id="excludedPanel"></div>
   </section>
@@ -165,7 +168,7 @@
   <section>
     <div class="section-head">
       <h2>Qualified journeys</h2>
-      <span class="hint">Expand (▶) for the full stop-by-stop timeline and route map. Tick "Claim started" once you file — synced with claims.html.</span>
+      <span class="hint" title="Sorted newest first. Each card shows the confirmed delay, which of the two strong evidence tiers it rests on, the distance and resulting mileage amount, and a claim-tracking control synced with claims.html.">Expand (▶) for the full stop-by-stop timeline and route map. Tick "Claim started" once you file — synced with claims.html.</span>
     </div>
     <div class="journey-list" id="journeyList"></div>
   </section>
@@ -225,12 +228,12 @@
   var lines = {};
   allRows.forEach(function (r) { lines[r.line] = true; });
   document.getElementById('statStrip').innerHTML = [
-    { label: 'Qualified journeys', value: allRows.length, sub: 'strictly confirmed only' },
-    { label: 'Total mileage reimbursement', value: fmtSek(totalCash), sub: 'if all claimed' },
-    { label: 'Distinct lines', value: Object.keys(lines).length, sub: 'affected' },
-    { label: 'Confirmation basis', value: '2 of 5', sub: 'delayBasis tiers accepted' },
+    { label: 'Qualified journeys', value: allRows.length, sub: 'strictly confirmed only', title: 'How many journeys, out of every trip in the full retention window, pass every one of the seven checks on this page. See "Excluded from this page" below for exactly what got filtered and why.' },
+    { label: 'Total mileage reimbursement', value: fmtSek(totalCash), sub: 'if all claimed', title: 'Sum of every qualified journey\'s own mileage amount (distance × rate, capped per journey) -- an illustrative total, not a guaranteed payout, and not all of these were necessarily your own journeys.' },
+    { label: 'Distinct lines', value: Object.keys(lines).length, sub: 'affected', title: 'Number of different Skånetrafiken route numbers represented among the qualified journeys.' },
+    { label: 'Confirmation basis', value: '2 of 5', sub: 'delayBasis tiers accepted', title: 'This project classifies every delay into 5 evidence tiers (see build_compensation.py\'s _delay_basis()); only the 2 strongest ever appear on this page -- final_arrival_confirmed and final_confirmed_via_trafikverket. The other 3 (unconfirmed prediction, station-passed-late fallback, Trafikverket-only) are excluded, see below.' },
   ].map(function (s) {
-    return '<div class="stat"><div class="label">' + esc(s.label) + '</div><div class="value">' + s.value + '</div><div class="sub">' + esc(s.sub) + '</div></div>';
+    return '<div class="stat" title="' + esc(s.title) + '"><div class="label">' + esc(s.label) + '</div><div class="value">' + s.value + '</div><div class="sub">' + esc(s.sub) + '</div></div>';
   }).join('');
 
   var EXCLUDED_LABELS = {
@@ -242,9 +245,18 @@
     below_150kr: 'Mileage amount itself under ' + fmtSek(C.minClaimValueSek),
     outside_skane: 'Origin or destination outside Skåne (e.g. Göteborg) — distance overstates what Sommarbiljetten covers',
   };
+  var EXCLUDED_TIPS = {
+    not_eligible: 'Cancelled trips, replacement-bus journeys, and anything under the 20-minute threshold never carry a computed mileage figure at all -- they show on compensation.html/claims.html under their own category instead.',
+    weak_delay_basis: 'The delay figure exists but isn\'t confirmed strongly enough for this page\'s bar -- a live mid-journey prediction never revisited, a number borrowed from an intermediate stop because the final stop was never recorded, or Trafikverket as the only source with no GTFS-RT corroboration.',
+    not_foreseeable: 'A genuinely confirmed delay, but with no matched disruption notice active before the trip\'s own scheduled departure -- meaning nothing was knowable before boarding. That makes it §3 territory (enduring a delay), not §4 (choosing to drive instead).',
+    recent_trip: 'Skånetrafiken\'s own support confirmed their system can take 1-2 days to finish registering a trip\'s delay -- filing before that risks an automatic rejection against a stale, too-low number.',
+    no_distance: 'This project\'s static schedule has no recorded distance for the trip, so a mileage figure (distance × rate) is mathematically impossible to compute.',
+    below_150kr: 'The confirmed distance produces a mileage amount too small to be worth the effort of filing a claim over.',
+    outside_skane: 'A real InterCity/Öresundståg service (e.g. Göteborg C) that also happens to serve Skåne stops -- its own full terminus-to-terminus distance overstates what a Skåne-regional ticket like Sommarbiljetten could ever cover.',
+  };
   var excluded = payload.excluded || {};
   document.getElementById('excludedPanel').innerHTML = Object.keys(EXCLUDED_LABELS).map(function (k) {
-    return '<div class="cell"><dt>' + esc(EXCLUDED_LABELS[k]) + '</dt><dd>' + (excluded[k] || 0).toLocaleString('en-GB') + '</dd></div>';
+    return '<div class="cell" title="' + esc(EXCLUDED_TIPS[k] || '') + '"><dt>' + esc(EXCLUDED_LABELS[k]) + '</dt><dd>' + (excluded[k] || 0).toLocaleString('en-GB') + '</dd></div>';
   }).join('');
 
   // ---- Claim tracking (same claim_tracking table as claims.html) ----
@@ -272,11 +284,15 @@
     ['voucher_email', 'Värdekod via e-post'],
     ['cash', 'Cash (needs your own bank details on the form)'],
   ];
+  var CLAIM_CHOICE_TIPS = {
+    compensationType: 'Which of §3/§4\'s payout paths you\'re filing under -- defaults to Mileage (own car) here, since that\'s this page\'s whole point, but you can change it if you end up filing differently.',
+    payoutMethod: 'Värdekod (voucher) via SMS or e-post, or cash to a registered bank account -- §4 documents no bonus for choosing voucher over cash on this path (unlike §3\'s price-deduction +50%).',
+  };
   function claimChoiceSelectHtml(key, field, current, options, placeholder) {
     var opts = '<option value="">' + esc(placeholder) + '</option>' + options.map(function (o) {
       return '<option value="' + esc(o[0]) + '"' + (current === o[0] ? ' selected' : '') + '>' + esc(o[1]) + '</option>';
     }).join('');
-    return '<span class="claim-choice"><select class="claim-choice-select" data-key="' + esc(key) + '" data-field="' + field + '">' + opts + '</select></span>';
+    return '<span class="claim-choice" title="' + esc(CLAIM_CHOICE_TIPS[field] || '') + '"><select class="claim-choice-select" data-key="' + esc(key) + '" data-field="' + field + '">' + opts + '</select></span>';
   }
   var TRACKING_DEFAULTS = { claimed: false, claimNumber: '', compensationType: 'mileage', payoutMethod: '', mailed: false, printedAt: null, filledPdfPath: '', claimedDigitally: false, refunded: false, refundedAt: null };
   function trackingFor(key) { return tracking[key] || TRACKING_DEFAULTS; }
@@ -434,7 +450,11 @@
         '</span></div>'
       : '';
     return '<div class="stops-panel">' + reasonHtml + mapHtml + '<table><thead><tr>' +
-      '<th>Seq</th><th>Stop</th><th>Sched</th><th>Actual</th><th>Delay</th>' +
+      '<th title="Stop sequence number along the trip\'s own static schedule, 1 = origin.">Seq</th>' +
+      '<th title="Station/stop name, in scheduled order.">Stop</th>' +
+      '<th title="Scheduled (timetabled) time at this stop.">Sched</th>' +
+      '<th title="Actual recorded time, where GTFS-RT captured one. \'on time\' means this specific stop was never individually recorded because it was under 5 minutes late (see config.MIN_DELAY_TO_RECORD_SEC) -- a reliable signal, not a guess.">Actual</th>' +
+      '<th title="Actual minus scheduled, in minutes, at this specific stop.">Delay</th>' +
       '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div>';
   }
 
@@ -449,24 +469,24 @@
     var t = trackingFor(key);
     var isOpen = expandedLegs.has(key);
     var toggleHtml = '<button type="button" class="expand-toggle" data-key="' + esc(key) + '" title="Show per-stop detail" aria-label="' + (isOpen ? 'Hide' : 'Show') + ' per-stop detail" aria-expanded="' + isOpen + '">' + (isOpen ? '▼' : '▶') + '</button>';
-    var routeHtml = '<span class="leg-route">' + esc(fmtDate(r.date)) + ' · ' + esc(r.originName || '?') + '<span class="dest-arrow">→</span>' + esc(r.dest || '?') + '</span>' +
+    var routeHtml = '<span class="leg-route" title="Trip date and route, from the static schedule\'s own origin/destination -- not guessed from whichever stops happened to be recorded.">' + esc(fmtDate(r.date)) + ' · ' + esc(r.originName || '?') + '<span class="dest-arrow">→</span>' + esc(r.dest || '?') + '</span>' +
       (r.reason ? '<span class="reason-icon-inline" title="' + esc(r.reason) + '">ℹ️ why?</span>' : '') +
-      '<span class="leg-time num">' + fmtTime(r.originTimeIso) + '–' + fmtTime(r.destTimeIso) + '</span>';
+      '<span class="leg-time num" title="Scheduled departure–arrival times, Europe/Stockholm.">' + fmtTime(r.originTimeIso) + '–' + fmtTime(r.destTimeIso) + '</span>';
     var choicesHtml =
       claimChoiceSelectHtml(key, 'compensationType', t.compensationType, COMPENSATION_TYPE_OPTIONS, 'Compensation…') +
       claimChoiceSelectHtml(key, 'payoutMethod', t.payoutMethod, PAYOUT_METHOD_OPTIONS, 'Payout…');
     var trackHtml = '<span class="claim-track">' +
-      '<label class="claimed-label"><input type="checkbox" class="claimed-check" data-key="' + esc(key) + '"' + (t.claimed ? ' checked' : '') + '> Claim started</label>' +
+      '<label class="claimed-label" title="Ticking this writes to the same claim_tracking table/row claims.html uses for this exact trip -- marking it claimed here also marks it claimed there, and vice versa."><input type="checkbox" class="claimed-check" data-key="' + esc(key) + '"' + (t.claimed ? ' checked' : '') + '> Claim started</label>' +
       choicesHtml +
       '</span>';
     var stopsPanel = isOpen ? renderStopsPanel(r) : '';
     return '<div class="journey-card">' + toggleHtml +
-      '<span class="line-badge">' + esc(r.line) + '</span>' +
+      '<span class="line-badge" title="Skånetrafiken route/line number.">' + esc(r.line) + '</span>' +
       (r.tripNumber ? '<span class="trip-num" title="Skånetrafiken\'s own app may show this same run under a different number partway through.">#' + esc(r.tripNumber) + ' ⓘ</span>' : '') +
       routeHtml +
-      '<span class="chip confirmed">' + (r.delayUsedMin != null ? r.delayUsedMin.toFixed(1) + ' min' : '–') + '</span>' +
+      '<span class="chip confirmed" title="The confirmed delay to the FINAL destination specifically -- the measure Skånetrafiken\'s own compensation rule literally uses, not the largest delay observed anywhere along the route.">' + (r.delayUsedMin != null ? r.delayUsedMin.toFixed(1) + ' min' : '–') + '</span>' +
       basisChipHtml(r) +
-      '<span class="amounts"><span>Distance: <strong>' + esc(fmtKm(r.distanceKm)) + '</strong></span><span>Mileage: <span class="amount">' + esc(fmtSek(r.carCash)) + '</span></span></span>' +
+      '<span class="amounts"><span title="From the trip\'s own static schedule -- the distance you would have traveled with Skånetrafiken, per §4\'s own wording, not the whole car trip if it happened to be longer.">Distance: <strong>' + esc(fmtKm(r.distanceKm)) + '</strong></span><span title="distance × ' + esc((C.carRateSekPerKm || 2.5).toString().replace('.', ',')) + ' kr/km, capped at ' + esc(fmtSek(C.altTransportCapSek)) + ' per journey.">Mileage: <span class="amount">' + esc(fmtSek(r.carCash)) + '</span></span></span>' +
       trackHtml +
       stopsPanel +
       '</div>';
