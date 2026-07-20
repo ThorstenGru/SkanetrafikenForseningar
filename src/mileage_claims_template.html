@@ -240,6 +240,7 @@
     recent_trip: 'Still inside the 1-2 day registration-lag window',
     no_distance: 'No distance on record — mileage uncomputable',
     below_150kr: 'Mileage amount itself under ' + fmtSek(C.minClaimValueSek),
+    outside_skane: 'Origin or destination outside Skåne (e.g. Göteborg) — distance overstates what Sommarbiljetten covers',
   };
   var excluded = payload.excluded || {};
   document.getElementById('excludedPanel').innerHTML = Object.keys(EXCLUDED_LABELS).map(function (k) {

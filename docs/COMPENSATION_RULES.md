@@ -889,10 +889,43 @@ re-derived logic) and keeps only rows passing all six checks:
    specifically, not `max(deductionVoucher, carCash)` like
    `compute_compensation()`'s own general 150kr floor does, since this
    page is only ever about the mileage path.
+7. **Origin and destination both within Skåne** (added after a second
+   user follow-up, same day: "of course just Skånetrafiken in Skåne").
+   Found live: several qualified rows were real InterCity/Öresundståg
+   trips whose static-schedule origin was Göteborg C — 304 km away, a
+   different county entirely. Root cause: `static_index.py`'s
+   `sommarticket_valid` flag only ever excluded Denmark and the Ven ferry
+   (`is_cross_border`/`is_ferry`); it never checked for OTHER Swedish
+   counties a trip might originate from, so a Göteborg–Malmö service that
+   also happens to serve Skåne stops got marked `sommarticket_valid=1` for
+   its entire length, and `distance_km` (the train's own full
+   terminus-to-terminus distance) overstated what Sommarbiljetten — a
+   Skåne-regional product — could ever cover. Fixed in
+   `build_mileage_claims.py` (not `static_index.py` — deliberately scoped
+   to this page only, not the broader eligible-trip counts on
+   compensation.html/claims.html, which would need a full static-index
+   rebuild and a wider risk review to touch) with `_within_skane()`: a
+   latitude cutoff at 56.3°N, calibrated directly against real
+   coordinates — Skåne's own northernmost stations (Helsingborg C,
+   Kristianstad C) sit at ~56.04°N, while the nearest stations outside the
+   county are already well clear of that (Halmstad C 56.67°N, Göteborg C
+   57.71°N). A deliberate simplification of §1's fuller scope (which also
+   covers neighbouring counties like Halland) — the user's own ask was
+   Skåne-only, not every neighbouring-county edge case. A missing
+   lat/lon is treated as not confirmable (excluded), the same conservative
+   default this project always applies.
 
 Exclusion counts are logged (build output) and shown on the page itself
 (`payload.excluded`) — this project's own "no silent caps" principle, not
 a silent narrowing.
+
+**Known, disclosed limitation:** the same Göteborg-origin trips can still
+appear on `compensation.html`/`claims.html` with an overstated mileage
+figure, since `sommarticket_valid`'s own root-cause gap (checking only
+Denmark/ferry, not other counties) hasn't been fixed at the source. Left
+as-is for now — a broader fix touches static_index.py and would change
+eligible-trip counts across all three pages' full retention window, a
+bigger, riskier change than this session's own scope.
 
 Added to the shared nav (all 5 templates) and
 `.github/actions/build-content-pages/action.yml` (built every scan cycle,

@@ -37,6 +37,27 @@ recentTrip (still inside Skånetrafiken's own 1-2 day registration-lag
 window -- see config.SKANETRAFIKEN_REGISTRATION_LAG_DAYS) and anything
 without a real distanceKm (mileage is literally uncomputable without one).
 
+**Also excludes trips whose origin or destination lies outside Skåne**
+(user's own follow-up, same day: "of course just Skånetrafiken in Skåne").
+Found live: several qualified rows were InterCity/Öresundståg trips whose
+static schedule origin was Göteborg C (304 km away, in Västra Götaland --
+a different county entirely). Root cause: static_index.py's
+`sommarticket_valid` flag only excludes Denmark and the Ven ferry
+(`is_cross_border`/`is_ferry`) -- it was never checking for OTHER Swedish
+counties a trip might originate from, so a Göteborg-Malmö InterCity
+service that happens to also serve Skåne stops got marked
+`sommarticket_valid=1` for its ENTIRE length, and `distance_km` (the
+train's own full terminus-to-terminus distance) then overstated what
+Sommarbiljetten -- a Skåne-regional product -- could ever actually cover.
+Fixed with a latitude cutoff (`_SKANE_MAX_LAT`), calibrated directly
+against real coordinates: Skåne's own northernmost stations (Helsingborg
+C, Kristianstad C) sit at ~56.04°N, while the nearest stations outside the
+county are already well clear of that (Halmstad C 56.67°N, Göteborg C
+57.71°N) -- a clean gap, not a fine judgment call. This is a deliberate
+simplification of §1's fuller scope (which also covers "neighbouring
+counties" like Halland) -- the user's own ask was to keep this page
+Skåne-only, not to model every neighbouring-county edge case.
+
 Usage:
     python src/build_mileage_claims.py                # full 45-day retention window
     python src/build_mileage_claims.py --out other.html
@@ -64,6 +85,22 @@ TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mileag
 # of number this page exists to exclude.
 STRICT_DELAY_BASES = {"final_arrival_confirmed", "final_confirmed_via_trafikverket"}
 
+# Calibrated directly against real stop coordinates (see this module's own
+# docstring) -- Skåne's own northernmost stations sit at ~56.04°N;
+# everything just outside the county (Halmstad C 56.67°N, Göteborg C
+# 57.71°N) is already well clear of that gap. A missing lat/lon (rare, but
+# possible for a stop the static feed never geocoded) is treated as NOT
+# confirmable, the same conservative default this project applies whenever
+# it can't actually back up a claim -- excluded, not assumed innocent.
+_SKANE_MAX_LAT = 56.3
+
+
+def _within_skane(r):
+    lat_o, lat_d = r.get("originLat"), r.get("destLat")
+    if lat_o is None or lat_d is None:
+        return False
+    return lat_o <= _SKANE_MAX_LAT and lat_d <= _SKANE_MAX_LAT
+
 
 def strictly_qualified_mileage_claims(comp_rows):
     """Returns (qualified_rows, exclusion_counts) -- exclusion_counts is
@@ -73,7 +110,7 @@ def strictly_qualified_mileage_claims(comp_rows):
     qualified = []
     excluded = {
         "not_eligible": 0, "weak_delay_basis": 0, "recent_trip": 0, "no_distance": 0, "below_150kr": 0,
-        "not_foreseeable": 0,
+        "not_foreseeable": 0, "outside_skane": 0,
     }
     for r in comp_rows:
         if r["calc"] != "eligible":
@@ -139,6 +176,21 @@ def main():
     full_schedule = load_full_stop_schedule([r["trip"] for r in qualified])
     qualified = merge_full_schedule(qualified, full_schedule, stops)
     qualified = enrich_with_endpoints(qualified, stops, trip_endpoints)
+
+    # Geographic scope check -- needs originLat/destLat, only available
+    # after enrich_with_endpoints() above, hence a second pass rather than
+    # folding into strictly_qualified_mileage_claims() itself. See this
+    # module's own docstring on why (a real InterCity/Öresundståg trip
+    # whose static schedule origin was Göteborg C, 304 km away).
+    in_scope, out_of_scope = [], 0
+    for r in qualified:
+        if _within_skane(r):
+            in_scope.append(r)
+        else:
+            out_of_scope += 1
+    qualified = in_scope
+    excluded["outside_skane"] = out_of_scope
+
     qualified.sort(key=lambda r: r["date"], reverse=True)
 
     with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
