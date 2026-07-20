@@ -489,8 +489,14 @@
     gap: 4px;
     cursor: pointer;
   }
+  /* Fades the whole day-group when its "Reviewed" checkbox is ticked --
+     display only, never removed from the DOM, so nothing inside (the
+     claimed/refunded checkboxes, selects, etc.) is affected. Restored to
+     full opacity on hover/focus-within so it's still comfortable to work
+     inside a faded day if you do go back to it. */
+  .day-group.day-reviewed { opacity: 0.45; transition: opacity 0.15s; }
+  .day-group.day-reviewed:hover, .day-group.day-reviewed:focus-within { opacity: 1; }
   .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-  .show-reviewed-label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
   .controls label {
     font-size: 11.5px;
     text-transform: uppercase;
@@ -611,7 +617,6 @@
     <div class="controls">
       <label for="dayFilter">Day</label>
       <select id="dayFilter"></select>
-      <label class="show-reviewed-label"><input type="checkbox" id="showReviewedCheck"> Show reviewed days</label>
       <button class="link-btn" id="selectSuggestedBtn">Reset to suggested selection</button>
       <button class="link-btn" id="clearBtn">Clear all</button>
     </div>
@@ -1453,7 +1458,6 @@
   var selected = {};
 
   var dayFilterEl = document.getElementById('dayFilter');
-  var showReviewedEl = document.getElementById('showReviewedCheck');
   populateDayFilter();
 
   var daysWithGaps = Object.keys(dayChains).filter(function (d) { return dayChains[d].length > 1; }).length;
@@ -1500,19 +1504,15 @@
     });
     if (filterVal !== '__ALL__') dayInfos = dayInfos.filter(function (info) { return info.date === filterVal; });
 
-    // Reviewed days are hidden by default -- see loadReviewedDays()/
-    // saveDayReviewed() and the "Show reviewed days" toggle above. The day
-    // filter dropdown still lets you jump to a specific reviewed day
-    // directly (filterVal !== '__ALL__' bypasses the hide), since picking
-    // one by name is an explicit ask to look at it.
-    var reviewedCount = dayInfos.filter(function (info) { return reviewedDays[info.date]; }).length;
-    if (filterVal === '__ALL__' && !showReviewedEl.checked) {
-      dayInfos = dayInfos.filter(function (info) { return !reviewedDays[info.date]; });
-    }
-
+    // Reviewed days stay in the list (never removed, never hidden) --
+    // ticking "Reviewed" just fades the whole day-group so it's visually
+    // de-emphasized on the next visit, purely a display state. It has
+    // nothing to do with claim_tracking (claimed/refunded/selected) --
+    // separate table, separate in-memory cache (reviewedDays vs tracking),
+    // and every checkbox/select inside a faded day stays fully interactive.
     document.getElementById('chainDays').innerHTML = dayInfos.map(function (info) {
       var isReviewed = !!reviewedDays[info.date];
-      var parts = ['<div class="day-group"><h3 class="day-heading">' +
+      var parts = ['<div class="day-group' + (isReviewed ? ' day-reviewed' : '') + '"><h3 class="day-heading">' +
         '<label class="day-reviewed-label"><input type="checkbox" class="day-reviewed-check" data-date="' + info.date + '"' + (isReviewed ? ' checked' : '') + '> Reviewed</label> ' +
         fmtDate(info.date) +
         (info.chrono.length > 1
@@ -1526,10 +1526,7 @@
       if (info.gaps.length) parts.push(info.gaps.join(''));
       parts.push('</div>');
       return parts.join('');
-    }).join('') ||
-      (reviewedCount
-        ? '<p class="hint">All ' + reviewedCount + ' day(s) in this window are marked reviewed. Tick "Show reviewed days" above to see them again.</p>'
-        : '<p class="hint">No eligible trips ' + (filterVal !== '__ALL__' ? 'for this day' : 'in this window') + '.</p>');
+    }).join('') || '<p class="hint">No eligible trips ' + (filterVal !== '__ALL__' ? 'for this day' : 'in this window') + '.</p>';
 
     document.querySelectorAll('.day-reviewed-check').forEach(function (cb) {
       cb.addEventListener('change', function () {
@@ -1807,7 +1804,6 @@
     renderAll();
   });
   dayFilterEl.addEventListener('change', renderChainDays);
-  showReviewedEl.addEventListener('change', renderChainDays);
 
   renderAll();
   Promise.all([loadTracking(), loadReviewedDays()]).then(renderAll);
