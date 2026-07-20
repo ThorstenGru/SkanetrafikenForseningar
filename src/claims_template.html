@@ -489,13 +489,16 @@
     gap: 4px;
     cursor: pointer;
   }
-  /* Fades the whole day-group when its "Reviewed" checkbox is ticked --
-     display only, never removed from the DOM, so nothing inside (the
-     claimed/refunded checkboxes, selects, etc.) is affected. Restored to
-     full opacity on hover/focus-within so it's still comfortable to work
-     inside a faded day if you do go back to it. */
-  .day-group.day-reviewed { opacity: 0.45; transition: opacity 0.15s; }
-  .day-group.day-reviewed:hover, .day-group.day-reviewed:focus-within { opacity: 1; }
+  /* Heavily recedes the whole day-group when its "Reviewed" checkbox is
+     ticked -- display only, never removed from the DOM, so nothing inside
+     (the claimed/refunded checkboxes, selects, etc.) is affected. Low
+     opacity alone (the first version of this, 0.45) read as too subtle --
+     grayscale stacked on top makes a reviewed day visually recede much
+     harder even at a glance/scroll, not just "slightly dimmer". Restored
+     to full color/opacity on hover/focus-within so it's still comfortable
+     to work inside one if you do go back to it. */
+  .day-group.day-reviewed { opacity: 0.18; filter: grayscale(1); transition: opacity 0.15s, filter 0.15s; }
+  .day-group.day-reviewed:hover, .day-group.day-reviewed:focus-within { opacity: 1; filter: none; }
   .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
   .controls label {
     font-size: 11.5px;
