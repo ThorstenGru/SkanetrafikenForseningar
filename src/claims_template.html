@@ -479,7 +479,18 @@
   }
   .gap-warning strong { color: #b23a2e; }
 
+  .day-reviewed-label {
+    font-weight: 400;
+    font-size: 11.5px;
+    letter-spacing: normal;
+    color: var(--ink-faint);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+  }
   .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .show-reviewed-label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
   .controls label {
     font-size: 11.5px;
     text-transform: uppercase;
@@ -600,6 +611,7 @@
     <div class="controls">
       <label for="dayFilter">Day</label>
       <select id="dayFilter"></select>
+      <label class="show-reviewed-label"><input type="checkbox" id="showReviewedCheck"> Show reviewed days</label>
       <button class="link-btn" id="selectSuggestedBtn">Reset to suggested selection</button>
       <button class="link-btn" id="clearBtn">Clear all</button>
     </div>
@@ -1011,6 +1023,47 @@
     });
   }
 
+  // Per-day "already looked into" flag (day_reviewed table) -- separate from
+  // claim_tracking (which is per-trip): most days have nothing worth
+  // claiming, and re-reading an already-checked day every page load is
+  // wasted effort. Ticking a day hides it from the default view below;
+  // "Show reviewed days" brings them back. Same read-open/write-gated
+  // pattern as tracking -- see the migration's own note.
+  var DAY_REVIEWED_URL = SB.url ? SB.url + '/rest/v1/day_reviewed' : null;
+  var reviewedDays = {};
+
+  function loadReviewedDays() {
+    if (!DAY_REVIEWED_URL) return Promise.resolve();
+    return fetch(DAY_REVIEWED_URL + '?select=review_date,reviewed&reviewed=is.true', { headers: sbHeaders(false) })
+      .then(function (resp) {
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        return resp.json();
+      })
+      .then(function (dbRows) {
+        dbRows.forEach(function (row) { reviewedDays[row.review_date.replace(/-/g, '')] = true; });
+      })
+      .catch(function () { /* non-fatal -- worst case, every day shows as unreviewed */ });
+  }
+
+  // Optimistic, same reasoning as saveTrackingRow: update the in-memory flag
+  // immediately, fire the write in the background, don't roll back on
+  // failure (personal record-keeping, not a transactional system).
+  function saveDayReviewed(dateYyyymmdd, reviewed) {
+    if (reviewed) reviewedDays[dateYyyymmdd] = true; else delete reviewedDays[dateYyyymmdd];
+    if (!DAY_REVIEWED_URL) { setStatus('Supabase not configured for this build', 'err'); return Promise.resolve(); }
+    setStatus('saving…', '');
+    return fetch(DAY_REVIEWED_URL, {
+      method: 'POST',
+      headers: Object.assign(sbHeaders(true), { 'Prefer': 'resolution=merge-duplicates' }),
+      body: JSON.stringify([{ review_date: isoDate(dateYyyymmdd), reviewed: reviewed, updated_at: new Date().toISOString() }]),
+    }).then(function (resp) {
+      if (!resp.ok) return resp.text().then(function (t) { throw new Error('HTTP ' + resp.status + ': ' + t); });
+      setStatus('synced with Supabase', 'ok');
+    }).catch(function (err) {
+      setStatus('⚠ save failed (' + err.message + ') — try again', 'err');
+    });
+  }
+
   // "Reasonability" = chain length (a longer connected chain is a stronger,
   // more concrete travel story than a lone leg). Ties broken by the
   // possible max amount — price deduction and car reimbursement are
@@ -1400,6 +1453,7 @@
   var selected = {};
 
   var dayFilterEl = document.getElementById('dayFilter');
+  var showReviewedEl = document.getElementById('showReviewedCheck');
   populateDayFilter();
 
   var daysWithGaps = Object.keys(dayChains).filter(function (d) { return dayChains[d].length > 1; }).length;
@@ -1446,8 +1500,21 @@
     });
     if (filterVal !== '__ALL__') dayInfos = dayInfos.filter(function (info) { return info.date === filterVal; });
 
+    // Reviewed days are hidden by default -- see loadReviewedDays()/
+    // saveDayReviewed() and the "Show reviewed days" toggle above. The day
+    // filter dropdown still lets you jump to a specific reviewed day
+    // directly (filterVal !== '__ALL__' bypasses the hide), since picking
+    // one by name is an explicit ask to look at it.
+    var reviewedCount = dayInfos.filter(function (info) { return reviewedDays[info.date]; }).length;
+    if (filterVal === '__ALL__' && !showReviewedEl.checked) {
+      dayInfos = dayInfos.filter(function (info) { return !reviewedDays[info.date]; });
+    }
+
     document.getElementById('chainDays').innerHTML = dayInfos.map(function (info) {
-      var parts = ['<div class="day-group"><h3 class="day-heading">' + fmtDate(info.date) +
+      var isReviewed = !!reviewedDays[info.date];
+      var parts = ['<div class="day-group"><h3 class="day-heading">' +
+        '<label class="day-reviewed-label"><input type="checkbox" class="day-reviewed-check" data-date="' + info.date + '"' + (isReviewed ? ' checked' : '') + '> Reviewed</label> ' +
+        fmtDate(info.date) +
         (info.chrono.length > 1
           ? ' <span class="chip canceled">' + (info.chrono.length - 1) + ' gap(s) network-wide</span>'
           : ' <span class="chip ok">one continuous chain</span>') +
@@ -1459,7 +1526,17 @@
       if (info.gaps.length) parts.push(info.gaps.join(''));
       parts.push('</div>');
       return parts.join('');
-    }).join('') || '<p class="hint">No eligible trips ' + (filterVal !== '__ALL__' ? 'for this day' : 'in this window') + '.</p>';
+    }).join('') ||
+      (reviewedCount
+        ? '<p class="hint">All ' + reviewedCount + ' day(s) in this window are marked reviewed. Tick "Show reviewed days" above to see them again.</p>'
+        : '<p class="hint">No eligible trips ' + (filterVal !== '__ALL__' ? 'for this day' : 'in this window') + '.</p>');
+
+    document.querySelectorAll('.day-reviewed-check').forEach(function (cb) {
+      cb.addEventListener('change', function () {
+        saveDayReviewed(cb.getAttribute('data-date'), cb.checked);
+        renderChainDays();
+      });
+    });
   }
 
   // The cart: selected legs that haven't been checked out yet. Once
@@ -1730,9 +1807,10 @@
     renderAll();
   });
   dayFilterEl.addEventListener('change', renderChainDays);
+  showReviewedEl.addEventListener('change', renderChainDays);
 
   renderAll();
-  loadTracking().then(renderAll);
+  Promise.all([loadTracking(), loadReviewedDays()]).then(renderAll);
 })();
 </script>
 </body>
