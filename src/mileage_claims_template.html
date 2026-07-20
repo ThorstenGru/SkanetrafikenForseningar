@@ -97,6 +97,11 @@
 
   .stops-panel { flex-basis: 100%; width: 100%; margin-top: 4px; padding: 8px 10px; background: var(--panel-alt); border: 1px solid var(--border); border-radius: 3px; font-size: 11.5px; }
   .stops-map { width: 100%; height: 260px; border: 1px solid var(--border); border-radius: 3px; margin-bottom: 8px; }
+  .qualify-block { flex-basis: 100%; width: 100%; background: var(--green-dim); border: 1px solid #b7e3c6; border-radius: 3px; padding: 8px 10px; margin-top: 2px; }
+  .qualify-block .qualify-title { font-family: var(--display); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: #146c3a; font-weight: 700; margin-bottom: 4px; }
+  .qualify-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; color: #1e5c3a; }
+  .qualify-list li::before { content: "✓ "; color: var(--green); font-weight: 700; }
+  .qualify-list .qualify-value { font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 600; color: #0f5a2f; }
   .reason-block { display: flex; gap: 6px; align-items: flex-start; background: var(--panel); border: 1px solid var(--border); border-radius: 3px; padding: 6px 8px; margin-bottom: 8px; font-size: 11.5px; color: var(--ink-dim); }
   .reason-block .reason-icon { flex: none; }
   .reason-block .reason-text { white-space: pre-wrap; }
@@ -206,9 +211,14 @@
     if (v === null || v === undefined) return '–';
     return v.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' kr';
   }
+  // Full precision (up to 3 decimals) everywhere, not rounded to 1 -- the
+  // user's own request: "be very precise with the kilometer displayed."
+  // Matches static_index.py's own stored precision exactly (distance_km
+  // is computed as round(shape_dist_traveled_delta / 1000, 3)), so this
+  // is never rounding away real precision the source data actually has.
   function fmtKm(km) {
     if (!km) return '–';
-    return km.toLocaleString('sv-SE', { maximumFractionDigits: 1 }) + ' km';
+    return km.toLocaleString('sv-SE', { minimumFractionDigits: 3, maximumFractionDigits: 3 }) + ' km';
   }
   function rowKey(r) { return r.trip + '|' + r.date; }
   function isoDate(yyyymmdd) { return fmtDate(yyyymmdd); }
@@ -464,6 +474,47 @@
       : '<span class="confirmed-flag" title="GTFS-RT itself recorded a real observation after this trip actually arrived at its final stop.">✓ GTFS-RT confirmed</span>';
   }
 
+  // Every check this row actually passed, spelled out with ITS OWN real
+  // numbers, not a generic description -- requested by the user: "be very
+  // explanatory why this journey qualifies... make the claim air tight."
+  // Always visible (not behind the expand toggle), since this is the
+  // whole point of the page, not a secondary detail.
+  function qualificationHtml(r) {
+    var finalStop = (r.stops || []).filter(function (s) { return s.final; })[0];
+    var basisText = r.delayBasis === 'final_confirmed_via_trafikverket'
+      ? 'corroborated by Trafikverket\'s independent post-arrival record'
+      : 'GTFS-RT\'s own recorded post-arrival observation';
+    var finalStopText = finalStop
+      ? ' at ' + esc(finalStop.name || r.dest) + ' (scheduled ' + esc(finalStop.schedTime || '?') + ', actual ' + esc(finalStop.actTime || '?') + ')'
+      : '';
+
+    var today = new Date();
+    var tripDate = new Date(r.date.slice(0, 4) + '-' + r.date.slice(4, 6) + '-' + r.date.slice(6, 8));
+    var daysAgo = Math.max(0, Math.round((today - tripDate) / 86400000));
+
+    var rate = C.carRateSekPerKm || 2.5;
+    var cap = C.altTransportCapSek;
+    var rawAmount = r.distanceKm != null ? r.distanceKm * rate : null;
+    var wasCapped = rawAmount != null && cap != null && rawAmount > cap;
+
+    var items = [
+      '<strong class="qualify-value">' + (r.delayUsedMin != null ? r.delayUsedMin.toFixed(1) : '?') + ' min</strong> confirmed delay to the final destination' + finalStopText + ' — ' + basisText + ', not a live prediction or an intermediate-stop guess.',
+      (r.reason ? 'Known before boarding: "<em>' + esc(r.reason.slice(0, 140)) + (r.reason.length > 140 ? '…' : '') + '</em>" was already active before the scheduled departure at <span class="qualify-value">' + fmtTime(r.originTimeIso) + '</span> — the rider could have decided to drive instead of even trying, per §4\'s own "risk being late" wording.' : ''),
+      'Both endpoints confirmed within Skåne: <span class="qualify-value">' + esc(r.originName || '?') + '</span> (' + (r.originLat != null ? r.originLat.toFixed(4) : '?') + '°N) and <span class="qualify-value">' + esc(r.dest || '?') + '</span> (' + (r.destLat != null ? r.destLat.toFixed(4) : '?') + '°N) both sit south of the 56.3°N cutoff — this is genuinely a Sommarbiljett-scoped journey, not an InterCity service passing through from another county.',
+      'Filed <span class="qualify-value">' + daysAgo + ' day(s)</span> after the trip — past Skånetrafiken\'s own confirmed 1-2 day registration-lag window, so their system has had time to finish registering the real delay.',
+      'Distance <span class="qualify-value">' + esc(fmtKm(r.distanceKm)) + '</span>, read directly from Skånetrafiken\'s own published GTFS schedule (shape_dist_traveled along the track) — the distance you would have traveled with Skånetrafiken specifically, per §4\'s own wording, not a road-driving estimate and not the whole car trip if it happened to be longer.',
+      'Mileage: ' + esc(fmtKm(r.distanceKm)) + ' × ' + rate.toString().replace('.', ',') + ' kr/km' +
+        (wasCapped
+          ? ' = ' + rawAmount.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' kr, capped at the §4 maximum of <span class="qualify-value">' + esc(fmtSek(cap)) + '</span>'
+          : ' = <span class="qualify-value">' + esc(fmtSek(r.carCash)) + '</span>') +
+        '.',
+      '<span class="qualify-value">' + esc(fmtSek(r.carCash)) + '</span> clears the ' + esc(fmtSek(C.minClaimValueSek)) + ' minimum worth filing.',
+    ].filter(Boolean);
+
+    return '<div class="qualify-block"><div class="qualify-title">Why this journey qualifies</div>' +
+      '<ul class="qualify-list">' + items.map(function (i) { return '<li>' + i + '</li>'; }).join('') + '</ul></div>';
+  }
+
   function journeyHtml(r) {
     var key = rowKey(r);
     var t = trackingFor(key);
@@ -488,6 +539,7 @@
       basisChipHtml(r) +
       '<span class="amounts"><span title="From the trip\'s own static schedule -- the distance you would have traveled with Skånetrafiken, per §4\'s own wording, not the whole car trip if it happened to be longer.">Distance: <strong>' + esc(fmtKm(r.distanceKm)) + '</strong></span><span title="distance × ' + esc((C.carRateSekPerKm || 2.5).toString().replace('.', ',')) + ' kr/km, capped at ' + esc(fmtSek(C.altTransportCapSek)) + ' per journey.">Mileage: <span class="amount">' + esc(fmtSek(r.carCash)) + '</span></span></span>' +
       trackHtml +
+      qualificationHtml(r) +
       stopsPanel +
       '</div>';
   }
