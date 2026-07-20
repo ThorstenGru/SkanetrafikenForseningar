@@ -67,9 +67,18 @@ STRICT_DELAY_BASES = {"final_arrival_confirmed", "final_confirmed_via_trafikverk
 def _origin_name(r):
     """The row's own `stops` list already carries every stop's name (no
     extra static-index lookup needed) -- min stop_sequence is the origin,
-    same convention build_claims.py's enrich_with_endpoints() uses."""
+    same convention build_claims.py's enrich_with_endpoints() uses.
+
+    Found live (2026-07-20): a trip whose `stops` list held exactly ONE
+    entry -- the final stop itself, GTFS-RT never having captured an
+    earlier one for it (the same "final-stop-only sighting" coverage
+    characteristic data_quality_check.py already documents as
+    informational, not a bug). min(seq) on a single-element list just
+    returns that same final stop, rendering as "Ystad station -> Ystad
+    station" -- a false loop, not a real one. Fewer than 2 stops means the
+    origin is genuinely unknown, not identical to the destination."""
     stops = r.get("stops") or []
-    if not stops:
+    if len(stops) < 2:
         return None
     return min(stops, key=lambda s: s.get("seq") or 0).get("name")
 
