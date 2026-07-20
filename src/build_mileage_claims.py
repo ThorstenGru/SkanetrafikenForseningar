@@ -51,6 +51,7 @@ import config
 import db
 from build_dashboard import fetch_detail_rows
 from build_compensation import compute_compensation
+from build_claims import load_static_lookups, load_full_stop_schedule, merge_full_schedule, enrich_with_endpoints
 from trafikverket_merge import merge_trafikverket
 
 TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mileage_claims_template.html")
@@ -62,25 +63,6 @@ TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mileag
 # unconfirmed, max_delay_fallback, trafikverket_only) is exactly the kind
 # of number this page exists to exclude.
 STRICT_DELAY_BASES = {"final_arrival_confirmed", "final_confirmed_via_trafikverket"}
-
-
-def _origin_name(r):
-    """The row's own `stops` list already carries every stop's name (no
-    extra static-index lookup needed) -- min stop_sequence is the origin,
-    same convention build_claims.py's enrich_with_endpoints() uses.
-
-    Found live (2026-07-20): a trip whose `stops` list held exactly ONE
-    entry -- the final stop itself, GTFS-RT never having captured an
-    earlier one for it (the same "final-stop-only sighting" coverage
-    characteristic data_quality_check.py already documents as
-    informational, not a bug). min(seq) on a single-element list just
-    returns that same final stop, rendering as "Ystad station -> Ystad
-    station" -- a false loop, not a real one. Fewer than 2 stops means the
-    origin is genuinely unknown, not identical to the destination."""
-    stops = r.get("stops") or []
-    if len(stops) < 2:
-        return None
-    return min(stops, key=lambda s: s.get("seq") or 0).get("name")
 
 
 def strictly_qualified_mileage_claims(comp_rows):
@@ -117,7 +99,7 @@ def strictly_qualified_mileage_claims(comp_rows):
         if r.get("carCash") is None or r["carCash"] < config.MIN_CLAIM_VALUE_SEK:
             excluded["below_150kr"] += 1
             continue
-        qualified.append(dict(r, originName=_origin_name(r)))
+        qualified.append(r)
     return qualified, excluded
 
 
@@ -141,6 +123,22 @@ def main():
 
     comp_rows = compute_compensation(rows)
     qualified, excluded = strictly_qualified_mileage_claims(comp_rows)
+
+    # Same enrichment pipeline build_claims.py uses -- full per-stop
+    # schedule (not just the delay-recorded subset), lat/lon for the map,
+    # and origin identity from the STATIC schedule's own origin_stop_id
+    # rather than guessed from whichever stops GTFS-RT happened to record.
+    # That last part also fixes, at the root, a real display bug found
+    # live 2026-07-20: a trip whose `stops` list held only its final stop
+    # (GTFS-RT never captured an earlier one) rendered as "Ystad station ->
+    # Ystad station" under the old ad-hoc min-seq guess -- trip_meta always
+    # knows the true origin regardless of what GTFS-RT happened to see.
+    # Run AFTER the strict filter (not on every comp_row) since these
+    # queries scope to the given trip_ids -- fewer trips, cheaper query.
+    stops, trip_endpoints = load_static_lookups()
+    full_schedule = load_full_stop_schedule([r["trip"] for r in qualified])
+    qualified = merge_full_schedule(qualified, full_schedule, stops)
+    qualified = enrich_with_endpoints(qualified, stops, trip_endpoints)
     qualified.sort(key=lambda r: r["date"], reverse=True)
 
     with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
@@ -157,6 +155,17 @@ def main():
                 "altTransportCapSek": config.ALT_TRANSPORT_CAP_SEK,
                 "minDelayMin": config.MIN_DELAY_FOR_COMPENSATION_MIN,
                 "minClaimValueSek": config.MIN_CLAIM_VALUE_SEK,
+            },
+            # Claim tracking (claim_tracking table) -- same table, same
+            # passphrase-gated write pattern as claims.html
+            # (COMPENSATION_RULES.md §12). Deliberately the SAME table, not
+            # a separate one: marking a journey claimed here reflects on
+            # claims.html for the same trip+date too, and vice versa --
+            # one underlying fact ("have I filed this"), not two.
+            "supabase": {
+                "url": config.SUPABASE_URL,
+                "anonKey": config.supabase_anon_key(),
+                "writePassphrase": config.claim_tracking_passphrase(),
             },
         },
         ensure_ascii=False, separators=(",", ":"),

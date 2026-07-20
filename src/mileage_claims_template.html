@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Skånetrafiken – Confirmed Mileage Claims</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
 <style>
   :root {
     --bg: #dfe6ec;
@@ -19,6 +20,8 @@
     --red-dim: #fdecea;
     --green: #1f9d55;
     --green-dim: #e6f7ec;
+    --blue: #2563a8;
+    --blue-dim: #e8f0fa;
     --display: "Bahnschrift SemiCondensed", "Bahnschrift", "Arial Narrow", "Segoe UI Semibold", sans-serif;
     --body: "Segoe UI", system-ui, -apple-system, sans-serif;
     --mono: ui-monospace, "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
@@ -53,21 +56,58 @@
   .rules-panel .cell { background: var(--panel); padding: 12px 16px; }
   .rules-panel dt { font-family: var(--display); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); margin: 0 0 4px; }
   .rules-panel dd { margin: 0; font-family: var(--mono); color: var(--ink); font-variant-numeric: tabular-nums; }
-  .table-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 3px; background: var(--panel); }
-  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
-  thead th { position: sticky; top: 0; background: var(--panel-alt); text-align: left; font-family: var(--display); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; color: var(--ink-dim); padding: 10px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
-  tbody td { padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; color: var(--ink); }
-  tbody tr:last-child td { border-bottom: none; }
-  tbody tr:hover td { background: rgba(31, 157, 85, 0.05); }
-  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .line-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; padding: 2px 7px; border-radius: 3px; background: var(--panel-alt); border: 1px solid var(--border); font-family: var(--mono); font-weight: 600; font-size: 12.5px; color: #182430; }
-  .checklist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--ink-dim); }
-  .checklist li::before { content: "✓ "; color: var(--green); font-weight: 700; }
-  .amount { font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 600; color: var(--green); }
   .excluded-panel { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 3px; overflow: hidden; font-size: 13px; }
   .excluded-panel .cell { background: var(--panel); padding: 12px 16px; }
   .excluded-panel dt { font-family: var(--display); font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); margin: 0 0 4px; }
   .excluded-panel dd { margin: 0; font-family: var(--mono); color: var(--ink); font-variant-numeric: tabular-nums; }
+
+  .journey-list { display: flex; flex-direction: column; gap: 8px; }
+  .journey-card {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px; row-gap: 6px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 3px;
+    padding: 8px 12px; font-size: 12.5px;
+  }
+  .journey-card:hover { border-color: var(--green); }
+  .journey-card input[type="checkbox"] { accent-color: var(--green); cursor: pointer; }
+  .expand-toggle { background: none; border: none; color: var(--ink-dim); font-family: var(--mono); font-size: 11px; cursor: pointer; padding: 2px 6px; line-height: 1; }
+  .expand-toggle:hover { color: var(--green); }
+  .line-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; padding: 2px 7px; border-radius: 3px; background: var(--panel-alt); border: 1px solid var(--border); font-family: var(--mono); font-weight: 600; font-size: 12.5px; color: #182430; }
+  .trip-num { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); white-space: nowrap; cursor: help; border-bottom: 1px dotted var(--ink-faint); }
+  .leg-route { color: var(--ink); }
+  .leg-time { color: var(--ink-dim); font-size: 11.5px; }
+  .dest-arrow { color: var(--ink-faint); margin: 0 3px; }
+  .reason-icon-inline { cursor: help; border-bottom: 1px dotted var(--ink-faint); }
+  .amounts { display: flex; flex-direction: column; gap: 1px; font-size: 11px; color: var(--ink-dim); border-left: 1px solid var(--border); padding-left: 8px; }
+  .amounts .amount { color: var(--green); font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 700; }
+  .chip { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11.5px; font-family: var(--display); font-weight: 600; letter-spacing: 0.03em; white-space: nowrap; }
+  .chip.confirmed { background: var(--green-dim); color: var(--green); }
+  .chip.unconfirmed-src { background: rgba(148, 163, 179, 0.2); color: var(--ink-dim); cursor: help; border-bottom: 1px dotted var(--ink-faint); }
+  .confirmed-flag { cursor: help; color: var(--green); font-weight: 600; border-bottom: 1px dotted var(--green); }
+
+  .claim-track { display: flex; align-items: center; gap: 6px; border-left: 1px solid var(--border); padding-left: 8px; font-size: 11.5px; color: var(--ink-dim); flex-wrap: wrap; row-gap: 4px; }
+  .claimed-label { display: flex; align-items: center; gap: 4px; cursor: pointer; white-space: nowrap; }
+  .claimed-label input[type="checkbox"] { accent-color: var(--green); cursor: pointer; }
+  .claim-choice { display: flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--ink-dim); }
+  .claim-choice select { background: var(--panel-alt); border: 1px solid var(--border); border-radius: 3px; padding: 3px 6px; font-size: 11.5px; color: var(--ink); }
+  #trackingStatus.ok { color: var(--green); }
+  #trackingStatus.err { color: var(--red); font-weight: 600; }
+
+  .stops-panel { flex-basis: 100%; width: 100%; margin-top: 4px; padding: 8px 10px; background: var(--panel-alt); border: 1px solid var(--border); border-radius: 3px; font-size: 11.5px; }
+  .stops-map { width: 100%; height: 260px; border: 1px solid var(--border); border-radius: 3px; margin-bottom: 8px; }
+  .reason-block { display: flex; gap: 6px; align-items: flex-start; background: var(--panel); border: 1px solid var(--border); border-radius: 3px; padding: 6px 8px; margin-bottom: 8px; font-size: 11.5px; color: var(--ink-dim); }
+  .reason-block .reason-icon { flex: none; }
+  .reason-block .reason-text { white-space: pre-wrap; }
+  .foreseeable-flag { color: var(--green); font-weight: 600; font-size: 11px; }
+  .stops-panel table { width: 100%; border-collapse: collapse; }
+  .stops-panel th { text-align: left; font-family: var(--display); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-faint); padding: 3px 8px 3px 0; border-bottom: 1px solid var(--border); }
+  .stops-panel td { padding: 3px 8px 3px 0; color: var(--ink-dim); border-bottom: none; }
+  .stops-panel tr.final-stop td { color: var(--ink); font-weight: 600; }
+  .stops-panel tr.delay-start td { background: rgba(209, 69, 58, 0.08); }
+  .stops-panel tr.stop-inferred td { color: var(--ink-faint); font-style: italic; }
+  .delay-flag { color: var(--red); font-weight: 600; font-size: 11px; }
+  .stop-delay.mild { color: var(--amber-bright); }
+  .stop-delay.severe { color: var(--red); font-weight: 600; }
+
   footer { color: var(--ink-faint); font-size: 12px; border-top: 1px solid var(--border); padding-top: 16px; line-height: 1.7; }
   :focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
   @media (max-width: 900px) { .stats { grid-template-columns: repeat(2, 1fr); } }
@@ -92,7 +132,8 @@
 
   <section>
     <div class="disclaimer">
-      <strong>This page is about foreseeability, not just a confirmed delay.</strong> §4's own wording is "you are (<em>or risk being</em>) at least 20 minutes late... and choose to drive yourself instead" — a test of what was already knowable <em>before boarding</em>, not something only measurable after the fact. A journey where the delay only became apparent once already underway is §3 territory (price deduction for enduring it) — the rider never had the chance to decide to drive instead. So every row here has both a confirmed bad outcome <em>and</em> a real, matched disruption notice that was already active before the trip's own scheduled departure. compensation.html and claims.html show every network-wide delay illustratively, including ones that don't meet this bar — this page deliberately shows far fewer. Still not a filed application — verify each one against the Skånetrafiken app before submitting. See <a href="https://github.com/ThorstenGru/SkanetrafikenForseningar/blob/master/docs/COMPENSATION_RULES.md">COMPENSATION_RULES.md</a>.
+      <strong>This page is about foreseeability, not just a confirmed delay.</strong> §4's own wording is "you are (<em>or risk being</em>) at least 20 minutes late... and choose to drive yourself instead" — a test of what was already knowable <em>before boarding</em>, not something only measurable after the fact. A journey where the delay only became apparent once already underway is §3 territory (price deduction for enduring it) — the rider never had the chance to decide to drive instead. So every row here has both a confirmed bad outcome <em>and</em> a real, matched disruption notice that was already active before the trip's own scheduled departure. compensation.html and claims.html show every network-wide delay illustratively, including ones that don't meet this bar — this page deliberately shows far fewer. Still not a filed application — verify each one against the Skånetrafiken app before submitting. Claim tracking here is the exact same <code>claim_tracking</code> record claims.html uses — marking one claimed on either page reflects on both. See <a href="https://github.com/ThorstenGru/SkanetrafikenForseningar/blob/master/docs/COMPENSATION_RULES.md">COMPENSATION_RULES.md</a>.
+      <span id="trackingStatus"></span>
     </div>
   </section>
 
@@ -124,31 +165,24 @@
   <section>
     <div class="section-head">
       <h2>Qualified journeys</h2>
+      <span class="hint">Expand (▶) for the full stop-by-stop timeline and route map. Tick "Claim started" once you file — synced with claims.html.</span>
     </div>
-    <div class="table-scroll">
-      <table>
-        <thead><tr>
-          <th scope="col">Date</th><th scope="col">Line</th><th scope="col">Trip</th>
-          <th scope="col">Route</th><th scope="col" class="num">Delay</th>
-          <th scope="col" class="num">Distance</th><th scope="col" class="num">Mileage</th>
-          <th scope="col">Why this qualifies</th>
-        </tr></thead>
-        <tbody id="tableBody"></tbody>
-      </table>
-    </div>
+    <div class="journey-list" id="journeyList"></div>
   </section>
 
   <footer>
-    Rebuilt every scan cycle (src/build_mileage_claims.py), reusing the exact same delay-confirmation and Trafikverket-verification pipeline as compensation.html/claims.html — nothing here is re-derived or independently guessed. Own car/motorcycle mileage only (§4) — taxi and other-operator reimbursement follow the same 20-minute rule but aren't tracked by this project.
+    Rebuilt every scan cycle (src/build_mileage_claims.py), reusing the exact same delay-confirmation, foreseeability, and Trafikverket-verification pipeline as compensation.html/claims.html — nothing here is re-derived or independently guessed. Own car/motorcycle mileage only (§4) — taxi and other-operator reimbursement follow the same 20-minute rule but aren't tracked by this project.
   </footer>
 </div>
 
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script type="application/json" id="raw-data">__DATA_JSON__</script>
 <script>
 (function () {
   var payload = JSON.parse(document.getElementById('raw-data').textContent);
-  var rows = payload.rows || [];
+  var allRows = payload.rows || [];
   var C = payload.constants || {};
+  var MIN_DELAY_MIN = C.minDelayMin || 20;
 
   function esc(s) {
     if (s === null || s === undefined) return '';
@@ -161,6 +195,10 @@
     var s = String(yyyymmdd);
     return s.slice(0, 4) + '-' + s.slice(4, 6) + '-' + s.slice(6, 8);
   }
+  function fmtTime(iso) {
+    if (!iso) return '?';
+    return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Stockholm' });
+  }
   function fmtSek(v) {
     if (v === null || v === undefined) return '–';
     return v.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' kr';
@@ -169,20 +207,25 @@
     if (!km) return '–';
     return km.toLocaleString('sv-SE', { maximumFractionDigits: 1 }) + ' km';
   }
+  function rowKey(r) { return r.trip + '|' + r.date; }
+  function isoDate(yyyymmdd) { return fmtDate(yyyymmdd); }
+
+  var rowsByKey = {};
+  allRows.forEach(function (r) { rowsByKey[rowKey(r)] = r; });
 
   document.getElementById('metaLine').textContent =
     'Window ' + fmtDate(payload.windowStart) + ' .. ' + fmtDate(payload.windowEnd) + ' (full retention) · ' +
-    rows.length.toLocaleString('en-GB') + ' journey(s) strictly qualified · all times Sweden local time (Europe/Stockholm)';
+    allRows.length.toLocaleString('en-GB') + ' journey(s) strictly qualified · all times Sweden local time (Europe/Stockholm)';
 
   document.getElementById('rateCell').textContent = (C.carRateSekPerKm || 2.5).toString().replace('.', ',') + ' kr/km, capped at ' + fmtSek(C.altTransportCapSek);
   document.getElementById('minCell').textContent = fmtSek(C.minClaimValueSek) + ' or more';
 
   var totalCash = 0;
-  rows.forEach(function (r) { totalCash += r.carCash || 0; });
+  allRows.forEach(function (r) { totalCash += r.carCash || 0; });
   var lines = {};
-  rows.forEach(function (r) { lines[r.line] = true; });
+  allRows.forEach(function (r) { lines[r.line] = true; });
   document.getElementById('statStrip').innerHTML = [
-    { label: 'Qualified journeys', value: rows.length, sub: 'strictly confirmed only' },
+    { label: 'Qualified journeys', value: allRows.length, sub: 'strictly confirmed only' },
     { label: 'Total mileage reimbursement', value: fmtSek(totalCash), sub: 'if all claimed' },
     { label: 'Distinct lines', value: Object.keys(lines).length, sub: 'affected' },
     { label: 'Confirmation basis', value: '2 of 5', sub: 'delayBasis tiers accepted' },
@@ -203,32 +246,262 @@
     return '<div class="cell"><dt>' + esc(EXCLUDED_LABELS[k]) + '</dt><dd>' + (excluded[k] || 0).toLocaleString('en-GB') + '</dd></div>';
   }).join('');
 
-  function basisLabel(basis) {
-    return basis === 'final_confirmed_via_trafikverket'
-      ? 'Trafikverket-corroborated arrival'
-      : 'GTFS-RT confirmed arrival';
+  // ---- Claim tracking (same claim_tracking table as claims.html) ----
+  var SB = payload.supabase || {};
+  var TRACKING_URL = SB.url ? SB.url + '/rest/v1/claim_tracking' : null;
+  var tracking = {};
+  var statusEl = document.getElementById('trackingStatus');
+  function setStatus(text, cls) {
+    if (!statusEl) return;
+    statusEl.textContent = text ? ' · ' + text : '';
+    statusEl.className = cls || '';
+  }
+  function sbHeaders(forWrite) {
+    var h = { 'apikey': SB.anonKey, 'Authorization': 'Bearer ' + SB.anonKey, 'Content-Type': 'application/json' };
+    if (forWrite) h['x-claim-passphrase'] = SB.writePassphrase;
+    return h;
+  }
+  var COMPENSATION_TYPE_OPTIONS = [
+    ['prisavdrag', 'Prisavdrag (price deduction)'],
+    ['taxi', 'Taxi reimbursement'],
+    ['mileage', 'Mileage (own car)'],
+  ];
+  var PAYOUT_METHOD_OPTIONS = [
+    ['voucher_sms', 'Värdekod via SMS'],
+    ['voucher_email', 'Värdekod via e-post'],
+    ['cash', 'Cash (needs your own bank details on the form)'],
+  ];
+  function claimChoiceSelectHtml(key, field, current, options, placeholder) {
+    var opts = '<option value="">' + esc(placeholder) + '</option>' + options.map(function (o) {
+      return '<option value="' + esc(o[0]) + '"' + (current === o[0] ? ' selected' : '') + '>' + esc(o[1]) + '</option>';
+    }).join('');
+    return '<span class="claim-choice"><select class="claim-choice-select" data-key="' + esc(key) + '" data-field="' + field + '">' + opts + '</select></span>';
+  }
+  var TRACKING_DEFAULTS = { claimed: false, claimNumber: '', compensationType: 'mileage', payoutMethod: '', mailed: false, printedAt: null, filledPdfPath: '', claimedDigitally: false, refunded: false, refundedAt: null };
+  function trackingFor(key) { return tracking[key] || TRACKING_DEFAULTS; }
+
+  function loadTracking() {
+    if (!TRACKING_URL) { setStatus('Supabase not configured for this build', 'err'); return Promise.resolve(); }
+    return fetch(TRACKING_URL + '?select=trip_id,trip_start_date,claimed,claim_number,compensation_type,payout_method,mailed,printed_at,filled_pdf_path,claimed_digitally,refunded,refunded_at', { headers: sbHeaders(false) })
+      .then(function (resp) {
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        return resp.json();
+      })
+      .then(function (dbRows) {
+        dbRows.forEach(function (row) {
+          var key = row.trip_id + '|' + row.trip_start_date.replace(/-/g, '');
+          tracking[key] = {
+            claimed: row.claimed,
+            claimNumber: row.claim_number || '',
+            compensationType: row.compensation_type || 'mileage',
+            payoutMethod: row.payout_method || '',
+            mailed: !!row.mailed,
+            printedAt: row.printed_at || null,
+            filledPdfPath: row.filled_pdf_path || '',
+            claimedDigitally: !!row.claimed_digitally,
+            refunded: !!row.refunded,
+            refundedAt: row.refunded_at || null,
+          };
+        });
+        setStatus('tracking synced with Supabase', 'ok');
+      })
+      .catch(function (err) {
+        setStatus('⚠ could not load saved tracking (' + err.message + ')', 'err');
+      });
   }
 
-  document.getElementById('tableBody').innerHTML = rows.map(function (r) {
-    var reasonSnippet = r.reason ? r.reason.slice(0, 90) + (r.reason.length > 90 ? '…' : '') : '–';
-    var checklist = [
-      'Known before departure: ' + reasonSnippet,
-      basisLabel(r.delayBasis) + ' (' + (r.delayUsedMin != null ? r.delayUsedMin.toFixed(1) : '–') + ' min ≥ ' + (C.minDelayMin || 20) + ')',
-      'Past the registration-lag window',
-      fmtKm(r.distanceKm) + ' on record',
-      fmtSek(r.carCash) + ' ≥ ' + fmtSek(C.minClaimValueSek),
-    ];
-    return '<tr>' +
-      '<td class="num">' + esc(fmtDate(r.date)) + '</td>' +
-      '<td><span class="line-badge">' + esc(r.line) + '</span></td>' +
-      '<td class="num">' + esc(r.tripNumber || '–') + '</td>' +
-      '<td>' + esc(r.originName || '?') + ' → ' + esc(r.dest || '?') + '</td>' +
-      '<td class="num">' + (r.delayUsedMin != null ? r.delayUsedMin.toFixed(1) + ' min' : '–') + '</td>' +
-      '<td class="num">' + esc(fmtKm(r.distanceKm)) + '</td>' +
-      '<td class="num amount">' + esc(fmtSek(r.carCash)) + '</td>' +
-      '<td><ul class="checklist">' + checklist.map(function (c) { return '<li>' + esc(c) + '</li>'; }).join('') + '</ul></td>' +
-      '</tr>';
-  }).join('') || '<tr><td colspan="8"><span class="hint">No journeys currently pass every check.</span></td></tr>';
+  function saveTrackingRow(r, patch) {
+    var key = rowKey(r);
+    tracking[key] = Object.assign({}, TRACKING_DEFAULTS, trackingFor(key), patch);
+    if (!TRACKING_URL) { setStatus('Supabase not configured for this build', 'err'); return Promise.resolve(); }
+    setStatus('saving…', '');
+    return fetch(TRACKING_URL, {
+      method: 'POST',
+      headers: Object.assign(sbHeaders(true), { 'Prefer': 'resolution=merge-duplicates' }),
+      body: JSON.stringify([{
+        trip_id: r.trip,
+        trip_start_date: isoDate(r.date),
+        claimed: tracking[key].claimed,
+        claim_number: tracking[key].claimNumber,
+        compensation_type: tracking[key].compensationType || null,
+        payout_method: tracking[key].payoutMethod || null,
+        mailed: tracking[key].mailed,
+        claimed_digitally: tracking[key].claimedDigitally,
+        refunded: tracking[key].refunded,
+        refunded_at: patch.hasOwnProperty('refunded') ? (patch.refunded ? new Date().toISOString() : null) : undefined,
+      }]),
+    }).then(function (resp) {
+      if (!resp.ok) return resp.text().then(function (t) { throw new Error('HTTP ' + resp.status + ': ' + t); });
+      setStatus('tracking synced with Supabase', 'ok');
+    }).catch(function (err) {
+      setStatus('⚠ save failed (' + err.message + ')', 'err');
+    });
+  }
+
+  // ---- Stop-by-stop detail + map (same rendering as claims.html) ----
+  var expandedLegs = new Set();
+  var leafletMaps = {};
+  function stopsMapId(key) { return 'stopsmap-' + key.replace(/[^a-zA-Z0-9]/g, '_'); }
+  function stopMarkerColor(s, isEndpoint) {
+    if (isEndpoint) return '#182430';
+    if (s.recorded === false) return '#1f9d55';
+    if (s.delayMin === null || s.delayMin === undefined) return '#94a3b3';
+    if (s.delayMin >= 5) return '#d1453a';
+    if (s.delayMin > 0.5) return '#e8872f';
+    return '#1f9d55';
+  }
+  function initStopMaps() {
+    Object.keys(leafletMaps).forEach(function (k) {
+      if (!expandedLegs.has(k)) { leafletMaps[k].remove(); delete leafletMaps[k]; }
+    });
+    expandedLegs.forEach(function (key) {
+      var r = rowsByKey[key];
+      if (!r) return;
+      var el = document.getElementById(stopsMapId(key));
+      if (!el) return;
+      if (leafletMaps[key]) { leafletMaps[key].remove(); delete leafletMaps[key]; }
+      var pts = (r.stops || []).filter(function (s) { return s.lat != null && s.lon != null; });
+      if (pts.length < 2) return;
+      var map = L.map(el, { scrollWheelZoom: false });
+      leafletMaps[key] = map;
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        maxZoom: 18,
+      }).addTo(map);
+      var latlngs = pts.map(function (s) { return [s.lat, s.lon]; });
+      L.polyline(latlngs, { color: '#1f9d55', weight: 4, opacity: 0.85 }).addTo(map);
+      pts.forEach(function (s, i) {
+        var isEndpoint = i === 0 || i === pts.length - 1 || s.final;
+        var delayLabel = s.recorded === false
+          ? 'on time'
+          : (s.delayMin === null || s.delayMin === undefined ? 'not recorded' : (s.delayMin > 0 ? '+' : '') + s.delayMin.toFixed(1) + ' min');
+        L.circleMarker([s.lat, s.lon], {
+          radius: isEndpoint ? 7 : 5,
+          color: '#fff',
+          weight: 1.5,
+          fillColor: stopMarkerColor(s, isEndpoint),
+          fillOpacity: 1,
+        }).addTo(map).bindTooltip(esc(s.name || '?') + ' · ' + delayLabel, { direction: 'top' });
+      });
+      map.fitBounds(latlngs, { padding: [24, 24] });
+    });
+  }
+  function stopDelayClass(m) {
+    if (m === null || m === undefined) return '';
+    if (m >= 5) return 'severe';
+    if (m > 0.5) return 'mild';
+    return '';
+  }
+
+  function renderStopsPanel(r) {
+    if (!r.stops || !r.stops.length) {
+      return '<div class="stops-panel"><span class="hint">No per-stop detail recorded for this trip.</span></div>';
+    }
+    var delayStartSeq = null;
+    for (var i = 0; i < r.stops.length; i++) {
+      var m = r.stops[i].delayMin;
+      if (m !== null && m !== undefined && m > 1 && delayStartSeq === null) { delayStartSeq = r.stops[i].seq; }
+    }
+    var rowsHtml = r.stops.map(function (s) {
+      var isStart = delayStartSeq !== null && s.seq === delayStartSeq;
+      var notRecorded = s.recorded === false;
+      var actualText = notRecorded ? 'on time' : esc(s.actTime || '–');
+      var delayText = notRecorded
+        ? '< 5 min'
+        : (s.delayMin === null || s.delayMin === undefined)
+          ? '–'
+          : (s.delayMin > 0 ? '+' : '') + s.delayMin.toFixed(1) + ' min';
+      return '<tr class="' + (s.final ? 'final-stop' : '') + (isStart ? ' delay-start' : '') + (notRecorded ? ' stop-inferred' : '') + '">' +
+        '<td class="num">' + (s.seq === null || s.seq === undefined ? '–' : s.seq) + '</td>' +
+        '<td>' + esc(s.name || '–') +
+          (s.final ? ' <span class="hint">(final stop)</span>' : '') +
+          (isStart ? ' <span class="delay-flag">⚡ delay begins here</span>' : '') +
+          (s.final ? ' <span class="delay-flag">🏁 final delay: ' + (s.delayMin === null || s.delayMin === undefined ? 'not confirmed' : ((s.delayMin > 0 ? '+' : '') + s.delayMin.toFixed(1) + ' min')) + '</span>' : '') +
+        '</td>' +
+        '<td class="num">' + esc(s.schedTime || '–') + '</td>' +
+        '<td class="num">' + actualText + '</td>' +
+        '<td class="num stop-delay ' + (notRecorded ? '' : stopDelayClass(s.delayMin)) + '">' + delayText + '</td>' +
+        '</tr>';
+    }).join('');
+    var geolocatedCount = r.stops.filter(function (s) { return s.lat != null && s.lon != null; }).length;
+    var mapHtml = geolocatedCount >= 2
+      ? '<div class="stops-map" id="' + stopsMapId(rowKey(r)) + '"></div>'
+      : '';
+    var reasonHtml = r.reason
+      ? '<div class="reason-block"><span class="reason-icon">ℹ️</span><span class="reason-text">' + esc(r.reason) +
+        (r.reasonKnownBeforeDeparture ? ' <span class="foreseeable-flag">✓ known before scheduled departure</span>' : '') +
+        '</span></div>'
+      : '';
+    return '<div class="stops-panel">' + reasonHtml + mapHtml + '<table><thead><tr>' +
+      '<th>Seq</th><th>Stop</th><th>Sched</th><th>Actual</th><th>Delay</th>' +
+      '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div>';
+  }
+
+  function basisChipHtml(r) {
+    return r.delayBasis === 'final_confirmed_via_trafikverket'
+      ? '<span class="confirmed-flag" title="Our own scanner\'s last poll for this trip happened before it actually arrived, so we only had a mid-journey prediction. Trafikverket independently kept tracking this train and recorded a real post-arrival time, which this figure now uses instead.">✓ Trafikverket-corroborated</span>'
+      : '<span class="confirmed-flag" title="GTFS-RT itself recorded a real observation after this trip actually arrived at its final stop.">✓ GTFS-RT confirmed</span>';
+  }
+
+  function journeyHtml(r) {
+    var key = rowKey(r);
+    var t = trackingFor(key);
+    var isOpen = expandedLegs.has(key);
+    var toggleHtml = '<button type="button" class="expand-toggle" data-key="' + esc(key) + '" title="Show per-stop detail" aria-label="' + (isOpen ? 'Hide' : 'Show') + ' per-stop detail" aria-expanded="' + isOpen + '">' + (isOpen ? '▼' : '▶') + '</button>';
+    var routeHtml = '<span class="leg-route">' + esc(fmtDate(r.date)) + ' · ' + esc(r.originName || '?') + '<span class="dest-arrow">→</span>' + esc(r.dest || '?') + '</span>' +
+      (r.reason ? '<span class="reason-icon-inline" title="' + esc(r.reason) + '">ℹ️ why?</span>' : '') +
+      '<span class="leg-time num">' + fmtTime(r.originTimeIso) + '–' + fmtTime(r.destTimeIso) + '</span>';
+    var choicesHtml =
+      claimChoiceSelectHtml(key, 'compensationType', t.compensationType, COMPENSATION_TYPE_OPTIONS, 'Compensation…') +
+      claimChoiceSelectHtml(key, 'payoutMethod', t.payoutMethod, PAYOUT_METHOD_OPTIONS, 'Payout…');
+    var trackHtml = '<span class="claim-track">' +
+      '<label class="claimed-label"><input type="checkbox" class="claimed-check" data-key="' + esc(key) + '"' + (t.claimed ? ' checked' : '') + '> Claim started</label>' +
+      choicesHtml +
+      '</span>';
+    var stopsPanel = isOpen ? renderStopsPanel(r) : '';
+    return '<div class="journey-card">' + toggleHtml +
+      '<span class="line-badge">' + esc(r.line) + '</span>' +
+      (r.tripNumber ? '<span class="trip-num" title="Skånetrafiken\'s own app may show this same run under a different number partway through.">#' + esc(r.tripNumber) + ' ⓘ</span>' : '') +
+      routeHtml +
+      '<span class="chip confirmed">' + (r.delayUsedMin != null ? r.delayUsedMin.toFixed(1) + ' min' : '–') + '</span>' +
+      basisChipHtml(r) +
+      '<span class="amounts"><span>Distance: <strong>' + esc(fmtKm(r.distanceKm)) + '</strong></span><span>Mileage: <span class="amount">' + esc(fmtSek(r.carCash)) + '</span></span></span>' +
+      trackHtml +
+      stopsPanel +
+      '</div>';
+  }
+
+  function renderAll() {
+    document.getElementById('journeyList').innerHTML = allRows.map(journeyHtml).join('') ||
+      '<p class="hint">No journeys currently pass every check.</p>';
+    initStopMaps();
+  }
+
+  document.addEventListener('change', function (e) {
+    if (e.target.classList.contains('claimed-check')) {
+      var ck = e.target.dataset.key;
+      saveTrackingRow(rowsByKey[ck], { claimed: e.target.checked });
+      renderAll();
+      return;
+    }
+    if (e.target.classList.contains('claim-choice-select')) {
+      var sk = e.target.dataset.key, field = e.target.dataset.field, patch = {};
+      patch[field] = e.target.value;
+      saveTrackingRow(rowsByKey[sk], patch);
+    }
+  });
+
+  document.addEventListener('click', function (e) {
+    var expandBtn = e.target.closest('.expand-toggle');
+    if (expandBtn) {
+      var ekey = expandBtn.dataset.key;
+      if (expandedLegs.has(ekey)) expandedLegs.delete(ekey); else expandedLegs.add(ekey);
+      renderAll();
+    }
+  });
+
+  renderAll();
+  loadTracking().then(renderAll);
 })();
 </script>
 </body>

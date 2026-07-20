@@ -44,6 +44,8 @@ runs:
       shell: bash
       env:
         DATABASE_URL: ${{ inputs.database-url }}
+        SUPABASE_ANON_KEY: ${{ inputs.supabase-anon-key }}
+        CLAIM_TRACKING_PASSPHRASE: ${{ inputs.claim-tracking-passphrase }}
         SOMMARBILJETT_PURCHASED_AT: ${{ inputs.sommarbiljett-purchased-at }}
       run: python src/build_mileage_claims.py --out pages_site/mileage_claims.html
 
