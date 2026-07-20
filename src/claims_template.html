@@ -1625,6 +1625,11 @@
     var dates = Object.keys(byDate).sort().reverse();
 
     var totalCash = 0, totalVoucher = 0, gapCount = 0;
+    // Same "Reviewed" checkbox + fade as renderChainDays()'s "Suggested
+    // reasonable chains" -- shares the same reviewedDays state/table
+    // (day_reviewed), since "have I reviewed this day" is the same
+    // question regardless of which section it's asked from. Requested by
+    // the user 2026-07-20.
     document.getElementById('checkedOutList').innerHTML = dates.map(function (d) {
       var segs = buildChains(byDate[d]);
       segs = segs.slice().sort(function (a, b) {
@@ -1632,7 +1637,10 @@
         var bt = b[0].originTimeIso || b[0].destTimeIso || '';
         return at < bt ? -1 : at > bt ? 1 : 0;
       });
-      var parts = ['<div class="day-group"><h3 class="day-heading">' + fmtDate(d) +
+      var isReviewed = !!reviewedDays[d];
+      var parts = ['<div class="day-group' + (isReviewed ? ' day-reviewed' : '') + '"><h3 class="day-heading">' +
+        '<label class="day-reviewed-label"><input type="checkbox" class="day-reviewed-check" data-date="' + d + '"' + (isReviewed ? ' checked' : '') + '> Reviewed</label> ' +
+        fmtDate(d) +
         (segs.length > 1
           ? ' <span class="chip canceled">' + (segs.length - 1) + ' unexplained gap(s)</span>'
           : ' <span class="chip ok">consistent day</span>') +
@@ -1644,6 +1652,13 @@
       parts.push('</div>');
       return parts.join('');
     }).join('');
+
+    document.querySelectorAll('#checkedOutList .day-reviewed-check').forEach(function (cb) {
+      cb.addEventListener('change', function () {
+        saveDayReviewed(cb.getAttribute('data-date'), cb.checked);
+        renderCheckedOut();
+      });
+    });
 
     out.forEach(function (r) {
       if (r.calc === 'eligible') { totalCash += r.deductionCash; totalVoucher += r.deductionVoucher; }
