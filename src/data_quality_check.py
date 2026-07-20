@@ -51,7 +51,20 @@ def _delay_basis_counts(cur, start_date, end_date):
 
 def _structural_checks(cur):
     """Basic invariants that should always hold if the data is internally
-    consistent -- each returns a count of VIOLATIONS (0 is healthy)."""
+    consistent -- each returns a count of VIOLATIONS (0 is healthy).
+
+    orphaned_final_stop_trips is the one exception to that "0 is healthy"
+    framing, kept for backward-compat naming with migration 018's own
+    column -- checked directly (2026-07-20) against a sample of 10 real
+    rows: every one had exactly ONE recorded row total, at the final stop,
+    with no earlier stop ever seen. That's a coverage characteristic of
+    interval-based polling (this project only ever sees what's in the feed
+    at poll time -- a trip that's already near its end when it first
+    enters our polling window, or a long route where we happened to catch
+    only the tail before it dropped from the feed, is expected), NOT
+    corrupted data. A genuinely large SPIKE in this number (vs. its usual
+    baseline) would be worth investigating -- the raw count on its own is
+    not evidence of a bug."""
     checks = {}
 
     cur.execute(

@@ -211,9 +211,9 @@
       '<tr><td>Station passed late, final unknown <span class="hint">(no final-stop observation at all)</span></td>' +
         '<td class="num">' + (dq.maxDelayFallbackTrips || 0).toLocaleString('en-GB') + ' (' + pct(dq.maxDelayFallbackTrips) + ')</td></tr>' +
       '</table>';
-    html += '<div class="hint" style="margin-top:14px;margin-bottom:6px;">Structural consistency checks (0 is healthy):</div>';
+    html += '<div class="hint" style="margin-top:14px;margin-bottom:6px;">Structural consistency checks (0 is healthy, except the first row -- see its own tooltip):</div>';
     html += '<table>' +
-      '<tr><td class="row-label">' + dot(sv.orphanedFinalStopTrips === 0, null) + 'Final stop with no matching origin</td><td class="num">' + esc(sv.orphanedFinalStopTrips) + '</td></tr>' +
+      '<tr><td class="row-label" title="Trips where the only stop we ever recorded was the final one -- checked directly against a sample: this is a coverage characteristic of interval-based polling (we only ever see what the feed shows at poll time), not corrupted data. Watch for a spike against its own usual baseline, not the raw count.">' + dot(true, 'informational, not a violation') + 'Final-stop-only sightings (informational)</td><td class="num">' + esc(sv.orphanedFinalStopTrips) + '</td></tr>' +
       '<tr><td class="row-label">' + dot(sv.arrivalAfterDepartureRows === 0, null) + 'Departure recorded before arrival</td><td class="num">' + esc(sv.arrivalAfterDepartureRows) + '</td></tr>' +
       '<tr><td class="row-label">' + dot(sv.implausibleDelayRows === 0, null) + 'Implausible delay (&gt;24h)</td><td class="num">' + esc(sv.implausibleDelayRows) + '</td></tr>' +
       '<tr><td class="row-label">' + dot(sv.cancelledAndDelayedTrips === 0, null) + 'Marked both cancelled and delayed</td><td class="num">' + esc(sv.cancelledAndDelayedTrips) + '</td></tr>' +
