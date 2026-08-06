@@ -25,10 +25,24 @@ name: Build and publish pages
 # always render the complete season window.
 
 on:
-  schedule:
-    # Offset from status.yml's own :25/:55 so the two don't land in the same
-    # minute -- see status.yml's note on the pages TOCTOU race they share.
-    - cron: "10 */3 * * *"
+  # SCHEDULE DELIBERATELY DISABLED, 2026-08-06. Manual dispatch only.
+  #
+  # A build was then measured, rather than estimated, at **671 MB of egress**
+  # (src/egress_meter.py, in the build log). Against the organisation's
+  # 5.5 GB monthly free-tier allowance that is roughly EIGHT FULL BUILDS PER
+  # MONTH -- so every-3-hours projected to 157 GB/30d, and even once a day
+  # projects to 20 GB/30d. No cadence that keeps the pages usefully fresh
+  # fits inside the allowance while each build re-reads the entire season.
+  #
+  # Scanning is unaffected and still runs on its own schedule: scan.py
+  # writes and barely reads, so data collection continues at full depth and
+  # nothing is lost while this is paused. Only the published pages go stale.
+  #
+  # Re-enable once builds stop re-reading the whole season every time (see
+  # docs/ARCHITECTURE.md, "Why rendering is decoupled from capture") or once
+  # the org has an allowance that can absorb it.
+  #
+  # - cron: "10 */3 * * *"
   workflow_dispatch: {}
 
 permissions:
