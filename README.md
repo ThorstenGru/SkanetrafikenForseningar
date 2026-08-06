@@ -4,9 +4,16 @@
 
 Continuous scanner that collects delays, cancelled trips, and service alerts
 for the whole Skånetrafiken network, via Trafiklab's open GTFS Regional data.
-Runs automatically every 15 minutes via GitHub Actions and builds up a history
-in Postgres (Supabase) — intended as evidence for compensation claims,
-complaints to Skånetrafiken about recurring problems, and personal stats.
+Scans as often as GitHub Actions will deliver (requested every 15 minutes;
+actually ~12-14 times a day) and builds up a history in Postgres (Supabase)
+— intended as evidence for compensation claims, complaints to Skånetrafiken
+about recurring problems, and personal stats. Pages are rebuilt and
+published separately, every 3 hours.
+
+Scoped to one Sommarbiljett season: **25 June – 20 August 2026**. Nothing
+outside that window is collected, kept, or published, and every workflow
+shuts itself down once it closes — see
+[docs/RUNBOOK.md](docs/RUNBOOK.md) "After the season".
 
 **Live dashboard:** https://thorstengru.github.io/SkanetrafikenForseningar/
 (rebuilt automatically on every scan run).

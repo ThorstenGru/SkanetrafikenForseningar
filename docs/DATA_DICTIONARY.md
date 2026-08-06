@@ -141,7 +141,7 @@ One log row per daily housekeeping run.
 
 | Column | Description |
 |---|---|
-| `run_at`, `cutoff_date` | When it ran and the retention cutoff used. |
+| `run_at`, `cutoff_date` | When it ran, and the start of the season window it enforced (everything before `cutoff_date` is gone). Retained its original name through the 2026-08-06 switch from a rolling retention cutoff to a fixed window; housekeeping now also deletes *after* `config.WINDOW_END`, which this column does not record. |
 | `*_deleted` | Row counts deleted per table. |
 | `error` | Error text if any. |
 

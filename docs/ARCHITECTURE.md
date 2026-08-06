@@ -2,6 +2,13 @@
 
 ## Flow, in order
 
+Capture and rendering are two separate pipelines on two separate schedules.
+That split (2026-08-06) is the single most important thing to understand
+here: `scan.py` almost only *writes*, so it is nearly free on Supabase's
+egress meter and runs as often as GitHub will allow; the page builders only
+*read*, so they are where all the egress lives and they run every 3 hours.
+See "Why rendering is decoupled from capture" below.
+
 ```
 GitHub Actions (cron every 15 min, .github/workflows/scan.yml)
         │
@@ -25,15 +32,103 @@ src/scan.py
    └─ 4. batched db.upsert_* against Postgres (Supabase)
           → delays, trip_cancellations, seen_trips, alerts,
             alert_entities, scan_runs
+          (rows dated outside the season window are dropped here, at
+           write time — see "The season window" below)
         │
         ▼
 GitHub Actions commits data/static_index.sqlite (only when it changed —
-about weekly) and deploys the rebuilt dashboard to GitHub Pages
+about weekly). That is all scan.yml does; it publishes nothing.
+
+.github/workflows/build.yml (cron every 3 hours)
+        │
+        ▼
+src/build_all.py  ── ONE pass over the database, shared by every page
+   ├─ fetch_trend() + fetch_recent_line_anomalies()   (cheap SQL aggregates)
+   ├─ fetch_detail_rows()  ← the single expensive query
+   ├─ build_dashboard.render()      → index.html      (pre-merge rows)
+   ├─ merge_trafikverket()  ← the single Trafikverket query
+   ├─ build_compensation.render()   → compensation.html
+   ├─ build_claims.render()         → claims.html
+   ├─ build_mileage_claims.render() → mileage_claims.html
+   └─ data_quality_check.record()   → data_quality_runs
+        │
+        ▼
+GitHub Pages
+
+.github/workflows/status.yml (cron every 30 min) → status.html, independently
 
 .github/workflows/housekeeping.yml (cron once daily)
    ├─ 1. src/coverage_check.py — see caveat below
-   └─ 2. src/housekeeping.py — deletes rows older than 45 days everywhere
+   └─ 2. src/housekeeping.py — deletes rows OUTSIDE the season window
 ```
+
+## The season window
+
+This project documents exactly one Sommarbiljett season: **25 June – 20
+August 2026**, fixed in `config.WINDOW_START` / `config.WINDOW_END`. Nothing
+before, nothing after. Every query range, every page's window metadata and
+every housekeeping cutoff derives from those two constants via
+`config.window_bounds()` / `config.claim_window()`; nothing computes a range
+of its own.
+
+It replaced a rolling `RETENTION_DAYS = 45` on 2026-08-06. A rolling cutoff
+was not merely imprecise here, it was on course to destroy the data set: the
+cutoff advanced a day per day, so from 2026-08-10 housekeeping would have
+begun deleting 25 June, then 26 June, and so on — the earliest days of the
+season the project exists to document — recording each deletion as a routine
+success. Two literal dates cannot walk into their own data.
+
+The window is enforced in three places, deliberately:
+
+- **At write time** — `scan.py` and `scan_trafikverket.py` drop out-of-window
+  rows before they ever reach Postgres. Both live feeds legitimately carry
+  next-day trips, which is exactly how the day after 20 August would
+  otherwise leak in. `backfill_koda.py` inherits this for free, since it runs
+  its archived snapshots through `scan.process_trip_updates()`.
+- **At read time** — every builder ranges over `config.window_bounds()`.
+- **In housekeeping** — a two-sided delete, so anything that somehow got
+  past the first two is removed. Operational log tables (`scan_runs`,
+  `housekeeping_runs`) get the lower bound only; a two-sided window would
+  have housekeeping delete its own audit row on post-season runs.
+
+Once the season closes, `src/window_guard.py` winds the whole project down:
+scanning stops at 20 August, building and housekeeping continue for a
+two-day grace period so the finished season is guaranteed a final render and
+a final purge, and then everything goes quiet permanently. See
+docs/RUNBOOK.md, "After the season".
+
+## Why rendering is decoupled from capture
+
+Until 2026-08-06 the four page builds ran inside `scan.yml`, on every scan.
+Each was a separate process with its own connection, and four of them
+(`build_compensation.py`, `build_claims.py`, `build_mileage_claims.py`,
+`data_quality_check.py`) independently ran the *same* full-window
+`fetch_detail_rows()` + `merge_trafikverket()` pair, while
+`build_dashboard.py` ran a fifth, narrower copy. Five passes over the same
+rows, every run.
+
+That put the Supabase organisation at **16.25 GB against a 5.5 GB free-tier
+allowance**, with every project in the org — including the unrelated
+BliGlömd production database, which shares the org — scheduled to start
+returning 402s on 2026-08-07.
+
+Three changes, none of which drop, thin or sample any data:
+
+1. **`build_all.py`** — one fetch, all five consumers. The pages it produces
+   are what the individual scripts produce; each `build_*.py` keeps a working
+   `main()` for standalone use.
+2. **Cadence** — rendering moved to its own workflow every 3 hours. Scanning
+   kept the tightest schedule the platform will give, because polling cadence
+   *is* data quality for a live GTFS-RT feed: anything missed between two
+   polls is missed permanently. Rendering has no such property. The claim
+   pages are the least time-sensitive of all — `SKANETRAFIKEN_REGISTRATION_LAG_DAYS`
+   records Skånetrafiken support's own advice to wait 1–2 days before filing.
+3. **Two wasteful queries fixed** — `build_alert_lookups()` no longer joins
+   `alert_entities × alerts` unbounded (it fetched every alert's long
+   `description_text` once per *entity*, ~6.4 copies each, with no date
+   filter); `_fetch_announcement_groups()` now restricts `train_announcements`
+   to train numbers that can actually be looked up, instead of pulling every
+   train calling at a Skåne station.
 
 ## Why static data is handled separately from realtime data
 
@@ -125,10 +220,14 @@ routine delays (ordinary traffic congestion) have no published alert though
 
 ## GitHub Actions workflows
 
-**`scan.yml`** (every 15 minutes, raised from every 2 hours on 2026-07-06 —
-see [COMPENSATION_RULES.md](COMPENSATION_RULES.md) §11 for why):
-- `cron: "*/15 * * * *"` — runs around the clock (UTC). Uses ~19% of the
-  realtime quota (30,000 requests/30 days; 2 requests/run × 96 runs/day).
+**`scan.yml`** — capture only. Writes to Postgres, publishes nothing.
+- `cron: "*/15 * * * *"` — runs around the clock (UTC), raised from every 2
+  hours on 2026-07-06 (see [COMPENSATION_RULES.md](COMPENSATION_RULES.md)
+  §11). **What is requested is not what is delivered**: measured 2026-08-06,
+  GitHub actually fires this ~12–14 times a day with gaps of 1h to 3.5h,
+  including during peak daytime service. `*/15` is a request for as much as
+  the platform will hand over, not a description of reality — budget quota
+  and reason about coverage from the *observed* rate, not the cron string.
 - `workflow_dispatch` — can also be run manually (`gh workflow run scan.yml`).
 - `concurrency` with `cancel-in-progress: false` — prevents two runs from
   racing on the same static-index commit if a run takes a while.
@@ -138,11 +237,23 @@ see [COMPENSATION_RULES.md](COMPENSATION_RULES.md) §11 for why):
 - The commit step only commits `data/static_index.sqlite`, and only when it
   actually changed (weekly, not every run) — delay data itself lives in
   Postgres, not git, so there's no git-history growth from it.
-- Builds the dashboard, compensation-estimate, and claim-chains pages, and
-  deploys all three to GitHub Pages every run.
+- Owns the `stop_times_cache.sqlite` actions/cache entry (restore *and*
+  save), because `static_index.py` is what regenerates that file and this is
+  the only scheduled workflow that refreshes the static index.
+
+**`build.yml`** (every 3 hours) — rendering and publishing, split out of
+`scan.yml` on 2026-08-06. Runs `src/build_all.py`, which builds all four
+content pages from a single database pass, then deploys to GitHub Pages. The
+only workflow that writes a `data_quality_runs` row (a backfill or a plain
+republish shouldn't pollute a table that tracks the live pipeline's health).
+Restores the `stop_times_cache` entry read-only.
+
+**`status.yml`** (every 30 min, halved from 15 on 2026-08-06): rebuilds
+`status.html` alone. Monitoring metadata only — it holds no delay data, so
+its cadence has no bearing on data quality.
 
 **`housekeeping.yml`** (daily): runs the coverage check for yesterday, then
-deletes everything older than 45 days.
+deletes everything outside the season window.
 
 **`backfill.yml`** (manual only): one-off historical backfill via
 `src/backfill_koda.py`, see [docs/RUNBOOK.md](RUNBOOK.md#backfill-historical-data-koda).
@@ -168,7 +279,7 @@ Reads directly from Postgres (no local SQLite involved for delay data — the
 time) and generates a JSON payload embedded into
 `src/dashboard_template.html` (static HTML/CSS/vanilla JS, no external
 dependencies). The history-per-day trend is a cheap SQL aggregate over the
-full 45-day retention window; the raw detail log defaults to the last 3
+full season window; the raw detail log defaults to the last 3
 days (or one specific day via `--date`) to keep the exported HTML bounded
 as history grows — see [RUNBOOK.md](RUNBOOK.md#generate-a-dashboard).
 
@@ -186,7 +297,7 @@ compensation calculation.
 
 A second page (`compensation.html`), built on every scan alongside the main
 dashboard. Reuses `fetch_detail_rows()` from `build_dashboard.py` — same
-per-trip data, but queried across the **full 45-day retention window**
+per-trip data, but queried across the **full season window**
 (not just the last few days) since the point is catching claimable delays
 before Skånetrafiken's 2-month application deadline passes.
 

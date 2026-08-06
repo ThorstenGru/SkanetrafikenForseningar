@@ -30,7 +30,7 @@ import argparse
 import json
 import os
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import config
 import db
@@ -211,26 +211,11 @@ def compute_compensation(rows):
     return out
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--out", default=os.path.join(config.REPO_ROOT, "compensation.html"))
-    args = parser.parse_args()
-
-    end_date = datetime.now(config.LOCAL_TZ).date()
-    start_date = end_date - timedelta(days=config.RETENTION_DAYS - 1)
-    start_date = max(start_date, config.sommarbiljett_purchased_at().date())
-
-    conn = db.connect()
-    cur = conn.cursor()
-    try:
-        rows = fetch_detail_rows(cur, start_date, end_date, None)
-        rows, _tv_stats = merge_trafikverket(rows, cur, start_date, end_date)
-    finally:
-        cur.close()
-        conn.close()
-
-    comp_rows = compute_compensation(rows)
-
+def render(out_path, comp_rows, start_date, end_date):
+    """Write compensation HTML from rows the caller has already fetched and
+    run through compute_compensation(). Separated from main() (2026-08-06)
+    so build_all.py can render every page from one shared query pass -- see
+    build_all.py's own module docstring."""
     with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
         template = f.read()
 
@@ -253,17 +238,36 @@ def main():
     ).replace("</script", "<\\/script")
     html = template.replace("__DATA_JSON__", payload)
 
-    out_dir = os.path.dirname(args.out)
+    out_dir = os.path.dirname(out_path)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
-    with open(args.out, "w", encoding="utf-8") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         f.write(html)
 
     eligible = sum(1 for r in comp_rows if r["calc"] == "eligible")
     cancelled = sum(1 for r in comp_rows if r["calc"] == "cancelled")
     bus_replaced = sum(1 for r in comp_rows if r["calc"] == "bus_replaced")
     print("Compensation page written to %s (%d eligible trips, %d cancelled trips listed but excluded, %d bus-replaced trips listed but excluded, window %s..%s)" % (
-        args.out, eligible, cancelled, bus_replaced, start_date, end_date))
+        out_path, eligible, cancelled, bus_replaced, start_date, end_date))
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--out", default=os.path.join(config.REPO_ROOT, "compensation.html"))
+    args = parser.parse_args()
+
+    start_date, end_date = config.claim_window()
+
+    conn = db.connect()
+    cur = conn.cursor()
+    try:
+        rows = fetch_detail_rows(cur, start_date, end_date, None)
+        rows, _tv_stats = merge_trafikverket(rows, cur, start_date, end_date)
+    finally:
+        cur.close()
+        conn.close()
+
+    render(args.out, compute_compensation(rows), start_date, end_date)
 
 
 if __name__ == "__main__":

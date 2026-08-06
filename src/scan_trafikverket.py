@@ -233,6 +233,11 @@ def load_location_signatures(cur):
 
 def main():
     now = datetime.now(timezone.utc)
+    # Same guard as scan.py -- see its own note. The season is over, so
+    # nothing this feed returns can belong to it.
+    if config.window_is_closed():
+        print("Season closed on %s -- nothing to scan." % config.WINDOW_END)
+        return
     conn = db.connect()
     try:
         cur = conn.cursor()
@@ -248,7 +253,18 @@ def main():
 
         raw_announcements, next_changeid = fetch(changeid, location_signatures)
         rows = [r for r in (to_row(a, now) for a in raw_announcements) if r is not None]
-        rows = dedupe_rows(rows)
+        # Enforce the season window at write time, same as scan.py. This
+        # feed is changeid-driven rather than time-windowed, so it will
+        # happily return announcements for tomorrow's trains (it carries
+        # ~2 weeks of future schedule -- see config.py's own note on
+        # TRAFIKVERKET_ANNOUNCEMENT_LOOKAHEAD_HOURS), which is precisely how
+        # dates past WINDOW_END would otherwise accumulate.
+        in_window_rows = [r for r in rows if config.in_window(r["traffic_date"])]
+        skipped = len(rows) - len(in_window_rows)
+        if skipped:
+            print("Skipped %d announcement(s) dated outside the season window (%s .. %s)" % (
+                skipped, config.WINDOW_START, config.WINDOW_END))
+        rows = dedupe_rows(in_window_rows)
 
         inserted = db.upsert_train_announcements_batch(cur, rows, now)
         db.set_trafikverket_changeid(cur, next_changeid, now)

@@ -86,6 +86,7 @@ def process_trip_updates(feed, trip_meta, stops, cur, now):
     seen_rows = []       # (trip_id, trip_start_date, route_short_name)
     cancellation_rows = []
     delay_rows = []
+    out_of_window = 0
 
     for entity in feed.entity:
         if not entity.HasField("trip_update"):
@@ -98,6 +99,15 @@ def process_trip_updates(feed, trip_meta, stops, cur, now):
             # key them on, and they'd collide with each other on insert.
             continue
         start_date = _parse_start_date(tu.trip.start_date, now)
+        # Enforce the season window at WRITE time, not just when building
+        # pages: a row outside 25 Jun .. 20 Aug is not data this project
+        # wants at any point in its life, so it should never occupy storage
+        # or get shipped back out again by a later query. The live feed
+        # legitimately carries next-day trips shortly before midnight, which
+        # is exactly how the day after WINDOW_END would otherwise sneak in.
+        if not config.in_window(start_date):
+            out_of_window += 1
+            continue
         trip_sched_rel = config.TRIP_SCHEDULE_RELATIONSHIP_LABELS.get(tu.trip.schedule_relationship, str(tu.trip.schedule_relationship))
 
         meta = trip_meta.get(trip_id, {})
@@ -198,6 +208,10 @@ def process_trip_updates(feed, trip_meta, stops, cur, now):
     cancellation_rows = list({(r["trip_id"], r["trip_start_date"]): r for r in cancellation_rows}.values())
     delay_rows = list({(r["trip_id"], r["trip_start_date"], r["stop_sequence"]): r for r in delay_rows}.values())
 
+    if out_of_window:
+        print("Skipped %d trip update(s) dated outside the season window (%s .. %s)" % (
+            out_of_window, config.WINDOW_START, config.WINDOW_END))
+
     db.upsert_seen_trips_batch(cur, seen_rows, now)
     cancellations_new = db.upsert_cancellations_batch(cur, cancellation_rows, now)
     delays_new = db.upsert_delays_batch(cur, delay_rows, now)
@@ -240,6 +254,13 @@ def process_alerts(feed, cur, now):
 
 def main():
     now = datetime.now(timezone.utc)
+    # Belt and braces alongside scan.yml's own window_guard.py step: no new
+    # data can belong to a season that has ended, so a manual dispatch or a
+    # replayed workflow shouldn't be able to reopen the feed either. Exits 0
+    # -- a correctly-skipped run is a success, not a failure.
+    if config.window_is_closed():
+        print("Season closed on %s -- nothing to scan." % config.WINDOW_END)
+        return
     if os.environ.get("FORCE_STATIC_REFRESH") == "true":
         static_refreshed = static_index.rebuild_index()
     else:

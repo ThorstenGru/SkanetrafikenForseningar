@@ -1,15 +1,22 @@
 name: Status dashboard
 
 on:
-  # Offset 7 min from scan.yml's on-the-quarter-hour */15 -- this and
-  # scan.yml each curl-fetch the page(s) the other owns before deploying
-  # (see build-content-pages's own note), which is a TOCTOU race if both
-  # land in the same minute: whichever deploys second can publish a
-  # snapshot of the other's pages that's already stale. Not aligned to the
-  # same schedule makes that far less likely to actually happen, though it
-  # doesn't eliminate it outright (a delayed run can still collide).
+  # Offset from build.yml's :10 -- this and build.yml each curl-fetch the
+  # page(s) the other owns before deploying (see build-content-pages's own
+  # note), which is a TOCTOU race if both land in the same minute: whichever
+  # deploys second can publish a snapshot of the other's pages that's already
+  # stale. Not aligned to the same schedule makes that far less likely to
+  # actually happen, though it doesn't eliminate it outright (a delayed run
+  # can still collide).
+  #
+  # Halved from every 15 min to every 30 on 2026-08-06. This page is
+  # monitoring metadata (database size, table row counts, last scan run) --
+  # it holds no delay data of its own, so its cadence has no bearing on data
+  # quality, and 96 connections a day to a free-tier database for a health
+  # readout that changes slowly was hard to justify while the org was over
+  # its egress allowance.
   schedule:
-    - cron: "7,22,37,52 * * * *"
+    - cron: "25,55 * * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -26,6 +33,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      should_run: ${{ steps.guard.outputs.should_run }}
     steps:
       - uses: actions/checkout@v4
 
@@ -37,7 +46,16 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # Goes quiet with everything else once the season is over -- a health
+      # readout for a pipeline that has stopped running has nothing to report.
+      # Placed after the install for the same reason scan.yml's is -- see its
+      # own note. See src/window_guard.py.
+      - name: Season window guard
+        id: guard
+        run: python src/window_guard.py --phase build >> "$GITHUB_OUTPUT"
+
       - name: Preserve the other pages (this workflow only rebuilds status.html)
+        if: steps.guard.outputs.should_run == 'true'
         run: |
           mkdir -p pages_site
           for f in index.html compensation.html claims.html mileage_claims.html claim_form_template.pdf; do
@@ -45,17 +63,22 @@ jobs:
           done
 
       - name: Build status dashboard
+        if: steps.guard.outputs.should_run == 'true'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python src/build_status.py --out pages_site/status.html
 
       - uses: actions/upload-pages-artifact@v3
+        if: steps.guard.outputs.should_run == 'true'
         with:
           path: pages_site
 
   deploy:
     needs: build
+    # Without this the deploy job would still fire on a skipped build and try
+    # to publish an artifact that was never uploaded.
+    if: needs.build.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

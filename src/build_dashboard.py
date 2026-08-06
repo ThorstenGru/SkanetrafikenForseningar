@@ -93,17 +93,74 @@ def build_alert_lookups(cur):
     capacity notice, see that function's own note) are dropped here, before
     they ever enter by_trip/by_route/by_stop -- so they can never be
     selected by best_reason()'s fallback, no matter how much more specific
-    a real candidate would otherwise have to be to beat them."""
+    a real candidate would otherwise have to be to beat them.
+
+    Fetched as two statements rather than one join, deliberately (2026-08-06,
+    the Supabase egress work). The join returned one row per alert ENTITY --
+    ~58k of them -- each carrying a full copy of its alert's
+    `description_text`, which is long Swedish prose and by far the widest
+    column involved. Since an alert averages ~6.4 informed entities, the same
+    text crossed the wire ~6.4 times over, and this ran once per build script
+    with no date bound at all. Fetching alerts once (deduplicated by
+    definition, filtered to the season and to delay-relevant text) and then
+    only the narrow id triples for the alerts that survived produces exactly
+    the same three lookup dicts for a fraction of the bytes.
+
+    Filtered to alerts whose active period can overlap the season at all,
+    padded a day either side: best_reason() matches against a trip's own
+    time window, which _trip_time_window() pads by 2h and which can therefore
+    reach a little past local midnight on the window's last day. The padding
+    keeps this a strict superset of anything _alert_active_on() could match,
+    so the filter can never change which reason a trip gets -- it only avoids
+    shipping alerts from outside the season entirely."""
+    win_start, win_end = config.window_bounds()
+    period_from = datetime.combine(
+        win_start - timedelta(days=1), datetime.min.time(), tzinfo=config.LOCAL_TZ)
+    period_to = datetime.combine(
+        win_end + timedelta(days=2), datetime.min.time(), tzinfo=config.LOCAL_TZ)
+
+    # NULL on either bound means "open on that side" -- same convention
+    # _alert_active_on() applies, and it must be spelled out here too or a
+    # genuinely always-active alert would be filtered out before ever
+    # reaching it.
     cur.execute(
-        """SELECT e.trip_id, e.route_id, e.stop_id, a.description_text,
-                  a.active_period_start, a.active_period_end
-           FROM alert_entities e JOIN alerts a ON a.alert_uid = e.alert_uid"""
+        """SELECT alert_uid, description_text, active_period_start, active_period_end
+           FROM alerts
+           WHERE (active_period_start IS NULL OR active_period_start < %s)
+             AND (active_period_end   IS NULL OR active_period_end   >= %s)""",
+        (period_to, period_from),
     )
-    by_trip, by_route, by_stop = {}, {}, {}
-    for trip_id, route_id, stop_id, desc, start, end in cur.fetchall():
+    alerts = {}
+    for alert_uid, desc, start, end in cur.fetchall():
         if _is_delay_irrelevant_alert(desc):
             continue
-        entry = (desc, start, end)
+        alerts[alert_uid] = (desc, start, end)
+
+    by_trip, by_route, by_stop = {}, {}, {}
+    if not alerts:
+        return by_trip, by_route, by_stop
+
+    # ORDER BY matters, and didn't exist before. best_reason() returns the
+    # FIRST active candidate it finds for a given trip/stop/route, and a
+    # route or stop routinely has several concurrently-active alerts (that is
+    # exactly how the platsbrist notice came to mask real delay reasons --
+    # see _DELAY_IRRELEVANT_ALERT_RE's own note). The old join left that
+    # choice to whatever physical order Postgres happened to return, so the
+    # winner could in principle differ between two runs over identical data.
+    # That is not purely cosmetic: the matched alert's own active_period_start
+    # drives `reasonKnownBeforeDeparture`, which build_mileage_claims.py uses
+    # as a hard foreseeability requirement (§4). Pinning the order makes that
+    # verdict reproducible.
+    cur.execute(
+        """SELECT alert_uid, trip_id, route_id, stop_id
+           FROM alert_entities WHERE alert_uid = ANY(%s)
+           ORDER BY alert_uid""",
+        (list(alerts),),
+    )
+    for alert_uid, trip_id, route_id, stop_id in cur.fetchall():
+        entry = alerts.get(alert_uid)
+        if entry is None:
+            continue
         if trip_id:
             by_trip.setdefault(trip_id, []).append(entry)
         if route_id:
@@ -395,6 +452,43 @@ def fetch_detail_rows(cur, start_date, end_date, single_date):
     return out
 
 
+def fetch_trend(cur):
+    """The two cheap daily aggregates the dashboard's history table is built
+    from, already stitched together. Split out of main() so build_all.py can
+    reuse it without re-deriving the merge."""
+    trend = fetch_history_trend(cur)
+    anomalies_by_day = fetch_line_anomalies_by_day(cur)
+    for row in trend:
+        row["lineAnomalies"] = anomalies_by_day.get(row["date"], 0)
+    return trend
+
+
+def render(out_path, trend, detail_rows, line_anomalies, scope_label):
+    """Write dashboard HTML from data the caller has already fetched.
+
+    Separated from main() (2026-08-06) so build_all.py can render this page
+    from the same single query pass every other page uses, instead of each
+    build script opening its own connection and re-reading the same rows --
+    see build_all.py's own module docstring."""
+    with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
+        template = f.read()
+
+    payload = json.dumps(
+        {"trend": trend, "rows": detail_rows, "lineAnomalies": line_anomalies},
+        ensure_ascii=False, separators=(",", ":"),
+    ).replace("</script", "<\\/script")
+    html = template.replace("__DATA_JSON__", payload)
+
+    out_dir = os.path.dirname(out_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(html)
+
+    print("Dashboard written to %s (%d detail rows for %s, %d days in history trend)" % (
+        out_path, len(detail_rows), scope_label, len(trend)))
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--date", default=None, help="YYYYMMDD — exactly one day of raw detail.")
@@ -407,40 +501,26 @@ def main():
         single_date = date(int(args.date[0:4]), int(args.date[4:6]), int(args.date[6:8]))
         start_date = end_date = single_date
     else:
-        end_date = datetime.now(config.LOCAL_TZ).date()
-        start_date = end_date - timedelta(days=args.days - 1)
+        # Anchored to the season window, not to "today": once the season is
+        # over the dashboard should keep showing its last real days rather
+        # than an ever-widening tail of empty ones.
+        window_start, end_date = config.window_bounds()
+        start_date = max(end_date - timedelta(days=args.days - 1), window_start)
 
     conn = db.connect()
     cur = conn.cursor()
     try:
-        trend = fetch_history_trend(cur)
-        anomalies_by_day = fetch_line_anomalies_by_day(cur)
-        for row in trend:
-            row["lineAnomalies"] = anomalies_by_day.get(row["date"], 0)
+        trend = fetch_trend(cur)
         detail_rows = fetch_detail_rows(cur, start_date, end_date, single_date)
         line_anomalies = fetch_recent_line_anomalies(cur)
     finally:
         cur.close()
         conn.close()
 
-    with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
-        template = f.read()
-
-    payload = json.dumps(
-        {"trend": trend, "rows": detail_rows, "lineAnomalies": line_anomalies},
-        ensure_ascii=False, separators=(",", ":"),
-    ).replace("</script", "<\\/script")
-    html = template.replace("__DATA_JSON__", payload)
-
-    out_dir = os.path.dirname(args.out)
-    if out_dir:
-        os.makedirs(out_dir, exist_ok=True)
-    with open(args.out, "w", encoding="utf-8") as f:
-        f.write(html)
-
-    scope = single_date or ("%s .. %s" % (start_date, end_date))
-    print("Dashboard written to %s (%d detail rows for %s, %d days in history trend)" % (
-        args.out, len(detail_rows), scope, len(trend)))
+    render(
+        args.out, trend, detail_rows, line_anomalies,
+        single_date or ("%s .. %s" % (start_date, end_date)),
+    )
 
 
 if __name__ == "__main__":

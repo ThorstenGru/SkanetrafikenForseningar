@@ -198,26 +198,21 @@ def enrich_with_endpoints(rows, stops, trip_endpoints):
     return out
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--out", default=os.path.join(config.REPO_ROOT, "claims.html"))
-    args = parser.parse_args()
+def render(out_path, comp_rows, start_date, end_date):
+    """Write claims HTML from rows the caller has already fetched and run
+    through compute_compensation().
 
-    end_date = datetime.now(config.LOCAL_TZ).date()
-    start_date = end_date - timedelta(days=config.RETENTION_DAYS - 1)
-    start_date = max(start_date, config.sommarbiljett_purchased_at().date())
+    Owns the whole static-schedule enrichment pipeline (full per-stop
+    timetable, coordinates, origin/destination identity) rather than taking
+    already-enriched rows, because merge_full_schedule() rebinds each row's
+    `stops` list in place and build_mileage_claims.py runs that same pipeline
+    over a much smaller, differently-filtered set. Keeping each page's
+    enrichment inside its own render() means the two can share the upstream
+    database rows -- the expensive part -- without sharing mutations. See
+    build_all.py's own module docstring.
 
-    conn = db.connect()
-    cur = conn.cursor()
-    try:
-        rows = fetch_detail_rows(cur, start_date, end_date, None)
-        rows, _tv_stats = merge_trafikverket(rows, cur, start_date, end_date)
-    finally:
-        cur.close()
-        conn.close()
-
+    Separated from main() 2026-08-06 for the Supabase egress work."""
     stops, trip_endpoints = load_static_lookups()
-    comp_rows = compute_compensation(rows)
     full_schedule = load_full_stop_schedule([r["trip"] for r in comp_rows])
     comp_rows = merge_full_schedule(comp_rows, full_schedule, stops)
     claim_rows = enrich_with_endpoints(comp_rows, stops, trip_endpoints)
@@ -246,22 +241,41 @@ def main():
     ).replace("</script", "<\\/script")
     html = template.replace("__DATA_JSON__", payload)
 
-    out_dir = os.path.dirname(args.out)
+    out_dir = os.path.dirname(out_path)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
-    with open(args.out, "w", encoding="utf-8") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         f.write(html)
 
     # claims.html fetches this by relative URL to fill it client-side (see
     # docs/COMPENSATION_RULES.md §16) -- needs to sit next to claims.html
-    # wherever it's built (scan.yml, backfill.yml, and deploy-pages.yml all
+    # wherever it's built (build.yml, backfill.yml, and deploy-pages.yml all
     # build this page into different working copies of pages_site/).
     shutil.copy(CLAIM_FORM_PDF_PATH, os.path.join(out_dir or ".", "claim_form_template.pdf"))
 
     eligible = sum(1 for r in claim_rows if r["calc"] == "eligible")
     with_coords = sum(1 for r in claim_rows if r["originLat"] is not None and r["destLat"] is not None)
     print("Claim-chain page written to %s (%d eligible trips, %d with both endpoints geolocated, window %s..%s)" % (
-        args.out, eligible, with_coords, start_date, end_date))
+        out_path, eligible, with_coords, start_date, end_date))
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--out", default=os.path.join(config.REPO_ROOT, "claims.html"))
+    args = parser.parse_args()
+
+    start_date, end_date = config.claim_window()
+
+    conn = db.connect()
+    cur = conn.cursor()
+    try:
+        rows = fetch_detail_rows(cur, start_date, end_date, None)
+        rows, _tv_stats = merge_trafikverket(rows, cur, start_date, end_date)
+    finally:
+        cur.close()
+        conn.close()
+
+    render(args.out, compute_compensation(rows), start_date, end_date)
 
 
 if __name__ == "__main__":

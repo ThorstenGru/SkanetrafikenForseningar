@@ -200,7 +200,7 @@ decisions (as of the second round, same day — the user revised #1, #2 and
 **Implemented (2026-07-06):** `src/build_compensation.py` generates
 `compensation.html`, an illustrative estimate of price-deduction (section 3)
 and car-reimbursement (section 4) compensation per eligible trip, across the
-full 45-day retention window. Known simplifications, by design:
+full season window (config.claim_window()). Known simplifications, by design:
 - Uses the Sommarbiljett's 40-single-trip divisor only — no other ticket
   type is modeled, since the whole project is scoped to Sommarbiljett-valid
   trips.

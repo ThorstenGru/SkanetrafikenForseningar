@@ -116,7 +116,7 @@ def _existing_gtfs_keys(cur, start_date, end_date):
     return {(trip_number, d) for trip_number, d in cur.fetchall()}
 
 
-def _fetch_announcement_groups(cur, start_date, end_date):
+def _fetch_announcement_groups(cur, start_date, end_date, train_numbers):
     """(advertised_train_number, traffic_date) -> list of raw announcement
     rows (as dicts) for that physical trip. Called once per
     merge_trafikverket() invocation and shared between enrich_reasons() and
@@ -130,14 +130,33 @@ def _fetch_announcement_groups(cur, start_date, end_date):
     actual_at/estimated_at, not by checking this flag directly). Leaving it
     out avoids both the unused-data smell and any temptation to read it
     naively elsewhere -- see this module's own docstring on why a lone
-    Canceled=true is not reliable."""
+    Canceled=true is not reliable.
+
+    `train_numbers` restricts the pull server-side (2026-08-06, the Supabase
+    egress work). scan_trafikverket.py filters its API query by STATION, not
+    by operator, so this table holds every train calling at a Skåne station
+    -- national SJ/Snälltåget services, freight, everything -- while only
+    trains that appear in Skånetrafiken's own static schedule can ever be
+    used by any of the three consumers downstream. Previously the whole
+    window came back regardless (~514k rows) and the surplus was discarded
+    in Python.
+
+    The caller passes a strict SUPERSET of what any consumer can look up --
+    every train number in the static schedule (build_gapfill_rows() resolves
+    candidates only through that index) plus every trip number present in
+    `rows` (what enrich_reasons() and confirm_stale_finals() key on). The
+    union matters: the static index is refreshed roughly weekly, so a trip
+    recorded in `delays` early in the season may no longer be in the current
+    timetable, and filtering on the index alone would quietly drop its
+    enrichment."""
     cur.execute(
         """SELECT advertised_train_number, traffic_date, location_signature, activity_type,
                   advertised_time_at_location, estimated_time_at_location, time_at_location,
                   deviation_text
            FROM train_announcements
-           WHERE traffic_date BETWEEN %s AND %s""",
-        (start_date, end_date),
+           WHERE traffic_date BETWEEN %s AND %s
+             AND advertised_train_number = ANY(%s)""",
+        (start_date, end_date, list(train_numbers)),
     )
     groups = {}
     for (train_number, traffic_date, sig, activity, advertised_at, estimated_at, actual_at,
@@ -402,7 +421,12 @@ def merge_trafikverket(rows, cur, start_date, end_date):
         trip_number_index, stop_names = _load_static_data()
         _sig_to_stop, stop_to_sig = _load_location_signature_map(cur)
         name_to_sig = _stop_name_to_sig(stop_to_sig, stop_names)
-        groups = _fetch_announcement_groups(cur, start_date, end_date)
+        # Superset of every train number the three consumers below can
+        # possibly key on -- see _fetch_announcement_groups()'s own note on
+        # why it's a union and not just the static index.
+        train_numbers = set(trip_number_index)
+        train_numbers.update(r["tripNumber"] for r in rows if r.get("tripNumber"))
+        groups = _fetch_announcement_groups(cur, start_date, end_date, train_numbers)
         rows = enrich_reasons(rows, groups)
         rows, confirmed = confirm_stale_finals(rows, trip_number_index, stop_names, stop_to_sig, name_to_sig, groups)
         gapfill_rows, skipped = build_gapfill_rows(

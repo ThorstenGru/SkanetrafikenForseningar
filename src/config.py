@@ -1,6 +1,7 @@
 """Configuration and constants for the Skånetrafiken delay scanner."""
 
 import os
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 # Always use this explicitly for any human-facing time display — never bare
@@ -23,13 +24,70 @@ SERVICEALERTS_URL_TMPL = "https://opendata.samtrafiken.se/gtfs-rt/{op}/ServiceAl
 # not daily, to keep a safe margin.
 STATIC_CACHE_MAX_AGE_DAYS = 7
 
-# How long detailed history is kept in Postgres before daily housekeeping
-# deletes it. Applies uniformly to delays, trip_cancellations, seen_trips,
-# line_daily_visibility, line_visibility_anomalies, alerts, scan_runs,
-# train_announcements, and housekeeping_runs itself -- see housekeeping.py.
-# ("missing_trips" was named here at some point but never actually exists
-# as a table in schema.sql or any migration -- corrected 2026-07-08.)
-RETENTION_DAYS = 45
+# ---------------------------------------------------------------------------
+# Data window -- the single source of truth for "which days exist"
+# ---------------------------------------------------------------------------
+# This project documents exactly one Sommarbiljett season, not a rolling
+# window of "recent" data: 25 June .. 20 August 2026, per the user
+# (2026-08-06). Nothing before, nothing after -- both bounds are hard, and
+# every query, every page build and every housekeeping pass derives its own
+# range from here rather than computing one of its own.
+#
+# Replaces the previous rolling RETENTION_DAYS = 45, which was actively
+# dangerous here rather than merely imprecise: its cutoff advanced one day
+# per day, so on 2026-08-10 it would have reached 2026-06-25 and housekeeping
+# would have begun DELETING the earliest days of the very season this project
+# exists to document -- silently, a day at a time, with the deletions
+# recorded as routine successes in housekeeping_runs. A fixed window cannot
+# drift into its own data.
+WINDOW_START = date(2026, 6, 25)
+WINDOW_END = date(2026, 8, 20)
+
+# How long the build and housekeeping workflows keep running after WINDOW_END
+# before going quiet for good. Long enough to guarantee at least one final
+# build+deploy of the completed season and one final housekeeping pass; short
+# enough that this project stops touching Supabase entirely a couple of days
+# later. Scanning stops dead at WINDOW_END -- no new data can belong to the
+# season after it ends, so there is nothing to poll for.
+WINDOW_GRACE_DAYS = 2
+
+
+def today_local():
+    """Today in Europe/Stockholm. Never date.today(), which is UTC on a
+    GitHub Actions runner and therefore the PREVIOUS calendar date for the
+    last couple of hours of every Stockholm day -- the same bug class
+    LOCAL_TZ's own note above describes."""
+    return datetime.now(LOCAL_TZ).date()
+
+
+def window_bounds():
+    """(start_date, end_date) for every query and page build.
+
+    `end` is clamped to today so an in-season build never advertises a window
+    running into the future, and freezes at WINDOW_END once the season is
+    over -- which is what makes the finished site stable rather than
+    re-rendering a wider empty range every day."""
+    return WINDOW_START, min(WINDOW_END, today_local())
+
+
+def in_window(d):
+    """Is this trip_start_date / traffic_date inside the season at all?
+    Used at WRITE time (scan.py) as well as read time -- a row outside the
+    window should never reach Postgres in the first place, not just be
+    filtered out of the pages afterwards."""
+    return WINDOW_START <= d <= WINDOW_END
+
+
+def window_is_closed(today=None):
+    """The season is over: no new data can arrive, so scanning stops."""
+    return (today or today_local()) > WINDOW_END
+
+
+def past_grace_period(today=None):
+    """Even the post-season wind-down is done -- building and housekeeping
+    stop permanently from here, and this project's Supabase egress goes to
+    zero. See docs/RUNBOOK.md, "After the season"."""
+    return (today or today_local()) > WINDOW_END + timedelta(days=WINDOW_GRACE_DAYS)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(REPO_ROOT, "data")
@@ -244,6 +302,22 @@ def sommarbiljett_purchased_at():
     ineligible trips. See docs/COMPENSATION_RULES.md §13."""
     from datetime import datetime
     return datetime.fromisoformat(get_key("SOMMARBILJETT_PURCHASED_AT"))
+
+def claim_window():
+    """The window every claim-facing page (compensation, claims, mileage)
+    builds over: the season, additionally clamped so it can never reach back
+    before the ticket was actually bought.
+
+    Both bounds already coincide today (the ticket was bought on
+    WINDOW_START), but they are separate facts -- the season is a project
+    scope decision, the purchase instant is the user's own and lives in a
+    secret because this repo is public. Keeping the clamp means a
+    re-purchased or differently-dated ticket can't silently pull ineligible
+    days onto a claim page. See sommarbiljett_purchased_at() and
+    docs/COMPENSATION_RULES.md §13."""
+    start, end = window_bounds()
+    return max(start, sommarbiljett_purchased_at().date()), end
+
 
 VOUCHER_BONUS = 1.5  # +50% for choosing a voucher code (värdekod) instead of cash — price-deduction only (section 3); no such bonus is documented for alternative-transport reimbursement (section 4)
 

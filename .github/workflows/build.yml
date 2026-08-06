@@ -1,0 +1,112 @@
+name: Build and publish pages
+
+# RENDER ONLY -- split out of scan.yml on 2026-08-06.
+#
+# Every byte of this project's Supabase egress comes from here: the scanner
+# writes, these pages read. Previously the four page builds plus the data
+# quality pass ran on EVERY scan (~14x/day), and each of the five opened its
+# own connection and re-ran the same full-window query. That combination put
+# the organisation at 16.25 GB against a 5.5 GB free-tier allowance, with
+# every project in the org -- BliGlömd included -- due to start returning
+# 402s on 2026-08-07.
+#
+# Two independent fixes: src/build_all.py collapsed the five query passes
+# into one, and the cadence below decoupled rendering from capture. Scanning
+# stays as frequent as GitHub will deliver (that IS the data quality);
+# rendering does not need to, and never did.
+#
+# Every 3h is a deliberate choice, not a budget compromise. The dashboard is
+# the only page with any real-time value and scans themselves only land every
+# ~2h in practice, so building more often mostly re-renders identical bytes.
+# The three claim pages are less time-sensitive still: config.py's own
+# SKANETRAFIKEN_REGISTRATION_LAG_DAYS records Skånetrafiken support's advice
+# to wait 1-2 DAYS before filing, so a page that is at most 3h old costs a
+# rider nothing. No data is dropped, thinned or sampled anywhere -- the pages
+# always render the complete season window.
+
+on:
+  schedule:
+    # Offset from status.yml's own :25/:55 so the two don't land in the same
+    # minute -- see status.yml's note on the pages TOCTOU race they share.
+    - cron: "10 */3 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: skanetrafiken-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      should_run: ${{ steps.guard.outputs.should_run }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Keeps building through a short wind-down after the season closes, so
+      # the finished dataset is guaranteed at least one final render, then
+      # stops permanently. Placed after the install for the same reason
+      # scan.yml's is -- see its own note. See src/window_guard.py and
+      # docs/RUNBOOK.md.
+      - name: Season window guard
+        id: guard
+        run: python src/window_guard.py --phase build >> "$GITHUB_OUTPUT"
+
+      - name: Restore stop_times cache
+        # Read-only here: scan.yml owns regenerating and saving this (it is
+        # static_index.py that writes it, and scan.yml is what refreshes the
+        # static index). A cache miss just means claims.html degrades to the
+        # sparse live-only stop list, not a build failure.
+        if: steps.guard.outputs.should_run == 'true'
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: data/stop_times_cache.sqlite
+          key: stop-times-${{ hashFiles('data/static_index.sqlite') }}
+          restore-keys: stop-times-
+
+      - name: Build content pages
+        if: steps.guard.outputs.should_run == 'true'
+        uses: ./.github/actions/build-content-pages
+        with:
+          database-url: ${{ secrets.DATABASE_URL }}
+          sommarbiljett-purchased-at: ${{ secrets.SOMMARBILJETT_PURCHASED_AT }}
+          supabase-anon-key: ${{ secrets.SUPABASE_ANON_KEY }}
+          claim-tracking-passphrase: ${{ secrets.CLAIM_TRACKING_PASSPHRASE }}
+          # The scheduled build is the live pipeline, so it's the one that
+          # should leave a data_quality_runs trail -- see the action's own
+          # note on why backfills and republishes don't.
+          data-quality: "true"
+
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.guard.outputs.should_run == 'true'
+        with:
+          path: pages_site
+
+  deploy:
+    needs: build
+    # Without this the deploy job would still fire on a skipped build and try
+    # to publish an artifact that was never uploaded.
+    if: needs.build.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

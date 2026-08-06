@@ -66,7 +66,6 @@ Usage:
 import argparse
 import json
 import os
-from datetime import datetime, timedelta
 
 import config
 import db
@@ -140,25 +139,15 @@ def strictly_qualified_mileage_claims(comp_rows):
     return qualified, excluded
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--out", default=os.path.join(config.REPO_ROOT, "mileage_claims.html"))
-    args = parser.parse_args()
+def render(out_path, comp_rows, start_date, end_date):
+    """Write mileage-claims HTML from rows the caller has already fetched and
+    run through compute_compensation().
 
-    end_date = datetime.now(config.LOCAL_TZ).date()
-    start_date = end_date - timedelta(days=config.RETENTION_DAYS - 1)
-    start_date = max(start_date, config.sommarbiljett_purchased_at().date())
+    Owns its own strict filtering and static-schedule enrichment rather than
+    receiving enriched rows -- see build_claims.render()'s note on why each
+    page runs that pipeline itself.
 
-    conn = db.connect()
-    cur = conn.cursor()
-    try:
-        rows = fetch_detail_rows(cur, start_date, end_date, None)
-        rows, _tv_stats = merge_trafikverket(rows, cur, start_date, end_date)
-    finally:
-        cur.close()
-        conn.close()
-
-    comp_rows = compute_compensation(rows)
+    Separated from main() 2026-08-06 for the Supabase egress work."""
     qualified, excluded = strictly_qualified_mileage_claims(comp_rows)
 
     # Same enrichment pipeline build_claims.py uses -- full per-stop
@@ -224,14 +213,33 @@ def main():
     ).replace("</script", "<\\/script")
     html = template.replace("__DATA_JSON__", payload)
 
-    out_dir = os.path.dirname(args.out)
+    out_dir = os.path.dirname(out_path)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
-    with open(args.out, "w", encoding="utf-8") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         f.write(html)
 
     print("Mileage claims page written to %s (%d qualified, excluded: %s, window %s..%s)" % (
-        args.out, len(qualified), excluded, start_date, end_date))
+        out_path, len(qualified), excluded, start_date, end_date))
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--out", default=os.path.join(config.REPO_ROOT, "mileage_claims.html"))
+    args = parser.parse_args()
+
+    start_date, end_date = config.claim_window()
+
+    conn = db.connect()
+    cur = conn.cursor()
+    try:
+        rows = fetch_detail_rows(cur, start_date, end_date, None)
+        rows, _tv_stats = merge_trafikverket(rows, cur, start_date, end_date)
+    finally:
+        cur.close()
+        conn.close()
+
+    render(args.out, compute_compensation(rows), start_date, end_date)
 
 
 if __name__ == "__main__":

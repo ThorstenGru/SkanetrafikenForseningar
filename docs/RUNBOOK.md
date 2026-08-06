@@ -82,12 +82,69 @@ by the selected day.
 
 ```bash
 export DATABASE_URL=...
-python src/build_compensation.py                 # compensation.html, full 45-day window
+python src/build_compensation.py                 # compensation.html, full season window
 python src/build_compensation.py --out other.html
 ```
 
 Illustrative delay-compensation estimate (price deduction + car
 reimbursement) — see [docs/COMPENSATION_RULES.md](COMPENSATION_RULES.md).
+
+## Build every page at once (what CI actually runs)
+
+The individual `build_*.py` scripts above still work and are fine for poking
+at one page. The pipeline does **not** use them: `build.yml` runs
+`src/build_all.py`, which produces all four pages from a single pass over
+the database instead of five separate full-window queries.
+
+```bash
+export DATABASE_URL=... SOMMARBILJETT_PURCHASED_AT=...
+export SUPABASE_ANON_KEY=... CLAIM_TRACKING_PASSPHRASE=...
+python src/build_all.py --out-dir pages_site
+python src/build_all.py --out-dir pages_site --dashboard-days 7
+python src/build_all.py --out-dir pages_site --skip-data-quality
+```
+
+Prefer this when reproducing what the site actually publishes, and when
+doing anything by hand against Supabase — running the four scripts
+separately costs four times the egress for identical output. See
+[ARCHITECTURE.md](ARCHITECTURE.md#why-rendering-is-decoupled-from-capture).
+
+## After the season
+
+The project is scoped to one Sommarbiljett season — 25 June to 20 August
+2026, `config.WINDOW_START`/`WINDOW_END`. It shuts itself down afterwards;
+there is nothing to disable manually and no cron to remember to remove.
+`src/window_guard.py` runs as the first real step of every scheduled
+workflow and decides whether the rest of the job does anything:
+
+| From | `scan.yml` | `build.yml` / `status.yml` | `housekeeping.yml` |
+|---|---|---|---|
+| before 25 Jun | skip | skip | skip |
+| 25 Jun – 20 Aug | run | run | run |
+| 21–22 Aug | **skip** | run (final render) | run (final purge) |
+| 23 Aug onward | skip | **skip** | **skip** |
+
+Scanning stops the moment the season ends, because no new data can belong to
+a window that has closed. Building and housekeeping get a two-day grace
+period (`config.WINDOW_GRACE_DAYS`) so the completed season is guaranteed at
+least one final build+deploy and one final purge of anything outside the
+window. After that every workflow is a no-op, the published site is static,
+and this project's Supabase egress is zero — which is the point: the free
+tier's allowance is shared across the whole organisation, including the
+unrelated BliGlömd production database.
+
+To check what the guard will do on a given day:
+
+```bash
+python src/window_guard.py --phase build
+```
+
+To extend or re-scope the project to another season, change the two dates in
+`config.py` — nothing else derives a range of its own. Note that widening the
+window backwards does **not** recover data: anything outside the window has
+already been deleted by housekeeping, and GTFS-RT has no history. Backfilling
+from KoDa is the only way to fill in past days (see above), and only for days
+KoDa still holds.
 
 ## Backfill historical data (KoDa)
 

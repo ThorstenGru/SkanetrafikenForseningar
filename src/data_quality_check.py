@@ -23,7 +23,7 @@ Usage:
 """
 
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import config
 import db
@@ -32,21 +32,19 @@ from build_dashboard import fetch_detail_rows
 from trafikverket_merge import merge_trafikverket
 
 
-def _delay_basis_counts(cur, start_date, end_date):
-    """Tallies _delay_basis() across every non-cancelled trip in the full
-    retention window -- the same classification build_compensation.py uses
-    for the compensation estimate, just applied to ALL trips (not only
-    ones that clear the 20-min/150kr thresholds), since the question here
-    is "how much of our data is confirmed" overall, not "how much is
-    claimable". Reuses merge_trafikverket() rather than re-deriving its
-    logic, so this can never silently drift out of sync with the real
-    build pipeline."""
-    rows = fetch_detail_rows(cur, start_date, end_date, None)
-    rows, tv_stats = merge_trafikverket(rows, cur, start_date, end_date)
-    basis_counts = Counter(
-        _delay_basis(r) for r in rows if r["status"] != "CANCELLED_TRIP"
-    )
-    return basis_counts, tv_stats
+def delay_basis_counts(rows):
+    """Tallies _delay_basis() across every non-cancelled trip in the season
+    window -- the same classification build_compensation.py uses for the
+    compensation estimate, just applied to ALL trips (not only ones that
+    clear the 20-min/150kr thresholds), since the question here is "how much
+    of our data is confirmed" overall, not "how much is claimable".
+
+    Takes already-merged rows rather than fetching its own (2026-08-06):
+    when this runs as part of build_all.py it must count the exact same row
+    set the pages were built from, and re-querying it was both a second
+    source of truth and -- over the full window, on every scan -- a large
+    share of this project's Supabase egress."""
+    return Counter(_delay_basis(r) for r in rows if r["status"] != "CANCELLED_TRIP")
 
 
 def _structural_checks(cur):
@@ -102,18 +100,19 @@ def _structural_checks(cur):
     return checks
 
 
-def main():
-    now = datetime.now(timezone.utc)
-    end_date = datetime.now(config.LOCAL_TZ).date()
-    start_date = end_date - timedelta(days=config.RETENTION_DAYS - 1)
-    start_date = max(start_date, config.sommarbiljett_purchased_at().date())
+def record(cur, rows, tv_stats):
+    """Persist one data_quality_runs row for an already-merged row set.
 
-    conn = db.connect()
-    cur = conn.cursor()
+    Callable directly by build_all.py (which has `rows`/`tv_stats` in hand
+    from the shared query pass) as well as by this module's own main().
+    Swallows its own failures exactly as before -- a reporting pass over
+    data the pipeline has already committed must never take the build down
+    with it."""
+    now = datetime.now(timezone.utc)
     error = None
-    basis_counts, tv_stats, struct_checks = Counter(), {}, {}
+    basis_counts, struct_checks = Counter(), {}
     try:
-        basis_counts, tv_stats = _delay_basis_counts(cur, start_date, end_date)
+        basis_counts = delay_basis_counts(rows)
         struct_checks = _structural_checks(cur)
     except Exception as exc:  # noqa: BLE001 -- log and persist, never break the scan pipeline
         import traceback
@@ -140,9 +139,6 @@ def main():
                 error,
             ),
         )
-        conn.commit()
-        cur.close()
-        conn.close()
 
     if error:
         print("Data quality check FAILED: %s" % error)
@@ -165,6 +161,23 @@ def main():
             struct_checks.get("cancelled_and_delayed_trips", 0),
         )
     )
+
+
+def main():
+    """Standalone entry point -- fetches its own rows. build_all.py calls
+    record() directly instead, reusing the rows it already has."""
+    start_date, end_date = config.claim_window()
+
+    conn = db.connect()
+    cur = conn.cursor()
+    try:
+        rows = fetch_detail_rows(cur, start_date, end_date, None)
+        rows, tv_stats = merge_trafikverket(rows, cur, start_date, end_date)
+        record(cur, rows, tv_stats)
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
 
 
 if __name__ == "__main__":

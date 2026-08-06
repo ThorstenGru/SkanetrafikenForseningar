@@ -1,9 +1,11 @@
 name: Build content pages
 description: >
-  Builds dashboard, compensation, and claims into pages_site/, then
-  preserves the independently-built status page. Shared by scan.yml,
-  backfill.yml, and deploy-pages.yml -- previously each repeated the same
-  four steps verbatim.
+  Builds every published page from a SINGLE pass over the database
+  (src/build_all.py), then preserves the independently-built status page.
+  Shared by build.yml, backfill.yml, and deploy-pages.yml -- previously each
+  repeated the same four steps verbatim, and before that each of those four
+  steps was its own process re-running the same full-window query (see
+  build_all.py's own docstring on why that had to stop).
 
 inputs:
   database-url:
@@ -14,40 +16,31 @@ inputs:
     required: true
   claim-tracking-passphrase:
     required: true
+  data-quality:
+    description: >
+      "true" to also write a data_quality_runs bookkeeping row. Only the
+      scheduled build does this -- a manual backfill or a plain republish
+      shouldn't add rows to a table that exists to track the live pipeline's
+      own health over time.
+    required: false
+    default: "false"
 
 runs:
   using: composite
   steps:
-    - name: Build dashboard
-      shell: bash
-      env:
-        DATABASE_URL: ${{ inputs.database-url }}
-      run: python src/build_dashboard.py --out pages_site/index.html
-
-    - name: Build compensation estimate page
+    - name: Build all pages (single database pass)
       shell: bash
       env:
         DATABASE_URL: ${{ inputs.database-url }}
         SOMMARBILJETT_PURCHASED_AT: ${{ inputs.sommarbiljett-purchased-at }}
-      run: python src/build_compensation.py --out pages_site/compensation.html
-
-    - name: Build reasonable claim chains page
-      shell: bash
-      env:
-        DATABASE_URL: ${{ inputs.database-url }}
         SUPABASE_ANON_KEY: ${{ inputs.supabase-anon-key }}
         CLAIM_TRACKING_PASSPHRASE: ${{ inputs.claim-tracking-passphrase }}
-        SOMMARBILJETT_PURCHASED_AT: ${{ inputs.sommarbiljett-purchased-at }}
-      run: python src/build_claims.py --out pages_site/claims.html
-
-    - name: Build confirmed mileage claims page
-      shell: bash
-      env:
-        DATABASE_URL: ${{ inputs.database-url }}
-        SUPABASE_ANON_KEY: ${{ inputs.supabase-anon-key }}
-        CLAIM_TRACKING_PASSPHRASE: ${{ inputs.claim-tracking-passphrase }}
-        SOMMARBILJETT_PURCHASED_AT: ${{ inputs.sommarbiljett-purchased-at }}
-      run: python src/build_mileage_claims.py --out pages_site/mileage_claims.html
+      run: |
+        EXTRA=""
+        if [ "${{ inputs.data-quality }}" != "true" ]; then
+          EXTRA="--skip-data-quality"
+        fi
+        python src/build_all.py --out-dir pages_site $EXTRA
 
     - name: Preserve status page (built independently by status.yml)
       shell: bash

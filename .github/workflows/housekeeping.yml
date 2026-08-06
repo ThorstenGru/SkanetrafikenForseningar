@@ -23,12 +23,22 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # Runs through the post-season wind-down so the finished dataset gets a
+      # final purge of anything outside the window, then stops permanently.
+      # Placed after the install for the same reason scan.yml's is -- see its
+      # own note. See src/window_guard.py and docs/RUNBOOK.md.
+      - name: Season window guard
+        id: guard
+        run: python src/window_guard.py --phase housekeeping >> "$GITHUB_OUTPUT"
+
       - name: Coverage check (yesterday)
+        if: steps.guard.outputs.should_run == 'true'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python src/coverage_check.py
 
-      - name: Delete data older than retention window
+      - name: Delete data outside the season window
+        if: steps.guard.outputs.should_run == 'true'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: python src/housekeeping.py

@@ -1,5 +1,20 @@
 name: Scan Skånetrafiken delays
 
+# CAPTURE ONLY. This workflow writes to Postgres and reads essentially
+# nothing back (scan.py's own lookups come from the local static SQLite
+# index), which makes it close to free on Supabase's egress meter. Page
+# rendering -- which is where all the egress actually was -- moved to
+# build.yml on 2026-08-06.
+#
+# That split is what lets this keep the tightest schedule the platform will
+# give us. Polling cadence IS the data quality here: GTFS-RT is a live
+# snapshot, not a log, so anything missed between two polls is missed
+# permanently. Note that GitHub delivers nowhere near the requested */15 --
+# measured 2026-08-06, actual delivery was ~12-14 runs/day with gaps of 1h
+# to 3.5h, including during peak daytime service. Asking for every 15
+# minutes is asking for as much as the platform will hand over, not a
+# description of what actually happens; see docs/RUNBOOK.md.
+
 on:
   schedule:
     - cron: "*/15 * * * *"
@@ -11,8 +26,6 @@ on:
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 concurrency:
   group: skanetrafiken-scan
@@ -37,12 +50,32 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # Nothing below this point runs once the season is over -- there is no
+      # such thing as new data for a window that has closed. scan.py enforces
+      # the same rule itself for manual dispatches; this skips the work (and
+      # every database connection) rather than relying on that alone.
+      #
+      # Placed after the install, not before: config.py resolves
+      # ZoneInfo("Europe/Stockholm") at import time, and requirements.txt is
+      # where tzdata comes from. Saving thirty seconds on a run that is
+      # already doing nothing isn't worth making the guard itself depend on
+      # the runner image shipping a system tz database. See
+      # src/window_guard.py.
+      - name: Season window guard
+        id: guard
+        run: python src/window_guard.py --phase scan >> "$GITHUB_OUTPUT"
+
       # stop_times_cache.sqlite (every trip's full timetable, for claims.html's
       # complete-journey view) is 150+ MB -- too big to commit to git (see
       # config.py's own note), so it round-trips through actions/cache
       # instead, keyed on the committed static_index.sqlite's own hash so it
       # naturally invalidates whenever that gets refreshed (~weekly).
+      #
+      # Restored/saved HERE rather than in build.yml because static_index.py
+      # is what regenerates it, and this is the only workflow that refreshes
+      # the static index on a schedule. build.yml restores it read-only.
       - name: Restore stop_times cache
+        if: steps.guard.outputs.should_run == 'true'
         continue-on-error: true  # a cache miss/service hiccup just means the complete-journey merge degrades gracefully, not a build failure
         uses: actions/cache/restore@v4
         with:
@@ -51,6 +84,7 @@ jobs:
           restore-keys: stop-times-
 
       - name: Run scanner
+        if: steps.guard.outputs.should_run == 'true'
         env:
           TRAFIKLAB_STATIC_KEY: ${{ secrets.TRAFIKLAB_STATIC_KEY }}
           TRAFIKLAB_REALTIME_KEY: ${{ secrets.TRAFIKLAB_REALTIME_KEY }}
@@ -63,8 +97,9 @@ jobs:
       # src/trafikverket_merge.py's hard rule: this data can enrich or
       # gap-fill, never override GTFS-RT). continue-on-error because this is
       # optional infrastructure -- a Trafikverket outage or rate limit must
-      # not take down the main scan/build/deploy pipeline.
+      # not take down the scan pipeline.
       - name: Run Trafikverket scanner
+        if: steps.guard.outputs.should_run == 'true'
         continue-on-error: true
         env:
           TRAFIKVERKET_KEY: ${{ secrets.TRAFIKVERKET_KEY }}
@@ -72,6 +107,7 @@ jobs:
         run: python src/scan_trafikverket.py
 
       - name: Commit static index (routes/stops cache, changes ~weekly)
+        if: steps.guard.outputs.should_run == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -89,28 +125,6 @@ jobs:
           echo "::error::git push failed after 3 attempts"
           exit 1
 
-      - name: Build content pages
-        uses: ./.github/actions/build-content-pages
-        with:
-          database-url: ${{ secrets.DATABASE_URL }}
-          sommarbiljett-purchased-at: ${{ secrets.SOMMARBILJETT_PURCHASED_AT }}
-          supabase-anon-key: ${{ secrets.SUPABASE_ANON_KEY }}
-          claim-tracking-passphrase: ${{ secrets.CLAIM_TRACKING_PASSPHRASE }}
-
-      # Persists, every run, how much of the current data actually rests on
-      # confirmed evidence vs. an unconfirmed/fallback number, plus basic
-      # structural consistency checks -- requested by the user 2026-07-20,
-      # see data_quality_check.py's own docstring and migration
-      # 018_data_quality_runs.sql. continue-on-error: this is a reporting
-      # pass over data the main pipeline already committed -- its own
-      # failure must never take down the scan/build/deploy pipeline.
-      - name: Data quality check
-        continue-on-error: true
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          SOMMARBILJETT_PURCHASED_AT: ${{ secrets.SOMMARBILJETT_PURCHASED_AT }}
-        run: python src/data_quality_check.py
-
       # Re-evaluates the hash *now*, after a possible refresh above -- if
       # scan.py rebuilt the static index this run, this saves under a new
       # key reflecting the fresh timetable; otherwise the key matches what
@@ -121,23 +135,9 @@ jobs:
         # for future runs, not something this run's own success depends on
         # (and GH Actions cache keys are immutable, so re-saving under an
         # already-existing key is an expected, harmless no-op most runs).
+        if: steps.guard.outputs.should_run == 'true'
         continue-on-error: true
         uses: actions/cache/save@v4
         with:
           path: data/stop_times_cache.sqlite
           key: stop-times-${{ hashFiles('data/static_index.sqlite') }}
-
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: pages_site
-
-  deploy:
-    needs: scan
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
