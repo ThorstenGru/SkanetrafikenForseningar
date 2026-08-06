@@ -6,7 +6,7 @@ Capture and rendering are two separate pipelines on two separate schedules.
 That split (2026-08-06) is the single most important thing to understand
 here: `scan.py` almost only *writes*, so it is nearly free on Supabase's
 egress meter and runs as often as GitHub will allow; the page builders only
-*read*, so they are where all the egress lives and they run every 3 hours.
+*read*, so they are where all the egress lives and they run every third day.
 See "Why rendering is decoupled from capture" below.
 
 ```
@@ -39,7 +39,7 @@ src/scan.py
 GitHub Actions commits data/static_index.sqlite (only when it changed —
 about weekly). That is all scan.yml does; it publishes nothing.
 
-.github/workflows/build.yml (cron every 3 hours)
+.github/workflows/build.yml (cron every third day)
         │
         ▼
 src/build_all.py  ── ONE pass over the database, shared by every page
@@ -117,7 +117,7 @@ Three changes, none of which drop, thin or sample any data:
 1. **`build_all.py`** — one fetch, all five consumers. The pages it produces
    are what the individual scripts produce; each `build_*.py` keeps a working
    `main()` for standalone use.
-2. **Cadence** — rendering moved to its own workflow every 3 hours. Scanning
+2. **Cadence** — rendering moved to its own workflow, every third day. Scanning
    kept the tightest schedule the platform will give, because polling cadence
    *is* data quality for a live GTFS-RT feed: anything missed between two
    polls is missed permanently. Rendering has no such property. The claim
@@ -129,6 +129,48 @@ Three changes, none of which drop, thin or sample any data:
    filter); `_fetch_announcement_groups()` now restricts `train_announcements`
    to train numbers that can actually be looked up, instead of pulling every
    train calling at a Skåne station.
+
+## What a build actually costs
+
+**671 MB of egress per build**, measured on the wire by `src/egress_meter.py`
+and printed in every build log — not estimated from row counts.
+
+That measurement is the reason the cadence above is every third day rather
+than every three hours, and it is worth stating plainly because the first
+attempt at this got it wrong: collapsing five query passes into one was a
+real ~10× improvement, was reported as if it had solved the problem, and had
+not. Against a 5.5 GB monthly allowance shared with BliGlömd's production
+database, 671 MB per build is **about eight full builds per month**. Every
+three hours projected to 157 GB/30d. Even *once a day* projects to 20 GB/30d.
+
+| cadence | per 30 days |
+|---|---|
+| every 3h | 157 GB |
+| every 6h | 78.7 GB |
+| twice daily | 39.3 GB |
+| once daily | 19.7 GB |
+| **allowance** | **5.5 GB** |
+
+The lesson worth keeping: **query count is not the billed unit.** This
+architecture reads the entire season on every build and assumes reads are
+free; on this tier reads are the scarce resource, and no cadence that keeps
+pages usefully fresh fits inside the allowance while that stays true.
+
+The proportionate fix was to size the cadence to the project's remaining
+lifespan rather than re-architect. The season ends 2026-08-20, after which
+`window_guard.py` stops every workflow permanently — from 2026-08-06 that is
+~6 more builds, **~3.9 GB for the entire rest of this project's life**, which
+fits. `build_all.py` prints exactly that figure (`_builds_remaining()`) at the
+end of each run, so the number stays honest as the end date approaches.
+
+**If this project ever had to keep running**, the real fix is incremental
+builds: cache processed rows per day in the Actions cache and query Postgres
+only for the last 2–3 days, since older days stop changing once
+`SKANETRAFIKEN_REGISTRATION_LAG_DAYS` has passed, with a periodic full
+rebuild to heal drift. That was deliberately *not* built here — it is a
+meaningful piece of new machinery sitting directly under the numbers real
+compensation claims are filed on, and it was not worth that risk for two
+remaining weeks.
 
 ## Why static data is handled separately from realtime data
 
@@ -241,7 +283,7 @@ routine delays (ordinary traffic congestion) have no published alert though
   save), because `static_index.py` is what regenerates that file and this is
   the only scheduled workflow that refreshes the static index.
 
-**`build.yml`** (every 3 hours) — rendering and publishing, split out of
+**`build.yml`** (every third day — see "What a build actually costs") — rendering and publishing, split out of
 `scan.yml` on 2026-08-06. Runs `src/build_all.py`, which builds all four
 content pages from a single database pass, then deploys to GitHub Pages. The
 only workflow that writes a `data_quality_runs` row (a backfill or a plain

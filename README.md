@@ -8,7 +8,7 @@ Scans as often as GitHub Actions will deliver (requested every 15 minutes;
 actually ~12-14 times a day) and builds up a history in Postgres (Supabase)
 — intended as evidence for compensation claims, complaints to Skånetrafiken
 about recurring problems, and personal stats. Pages are rebuilt and
-published separately, every 3 hours.
+published separately, every third day.
 
 Scoped to one Sommarbiljett season: **25 June – 20 August 2026**. Nothing
 outside that window is collected, kept, or published, and every workflow

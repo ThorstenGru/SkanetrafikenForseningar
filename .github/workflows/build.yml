@@ -25,24 +25,35 @@ name: Build and publish pages
 # always render the complete season window.
 
 on:
-  # SCHEDULE DELIBERATELY DISABLED, 2026-08-06. Manual dispatch only.
+  # EVERY THIRD DAY -- sized against a measured cost, not a guess, and
+  # against how little of this project's life is left.
   #
-  # A build was then measured, rather than estimated, at **671 MB of egress**
-  # (src/egress_meter.py, in the build log). Against the organisation's
-  # 5.5 GB monthly free-tier allowance that is roughly EIGHT FULL BUILDS PER
-  # MONTH -- so every-3-hours projected to 157 GB/30d, and even once a day
-  # projects to 20 GB/30d. No cadence that keeps the pages usefully fresh
-  # fits inside the allowance while each build re-reads the entire season.
+  # A build measures at ~671 MB of egress (src/egress_meter.py prints the
+  # real figure in every build log). The organisation's free-tier allowance
+  # is 5.5 GB/month, shared with BliGlömd's production database, so that is
+  # roughly EIGHT FULL BUILDS PER MONTH. Every 3 hours -- the cadence this
+  # workflow shipped with earlier today -- projected to 157 GB/30d. Even
+  # once a day projects to 20 GB/30d. Collapsing five query passes into one
+  # was a genuine ~10x improvement and still nowhere near enough: this
+  # architecture assumes database reads are free, and on this tier reads are
+  # the scarce resource.
   #
-  # Scanning is unaffected and still runs on its own schedule: scan.py
-  # writes and barely reads, so data collection continues at full depth and
-  # nothing is lost while this is paused. Only the published pages go stale.
+  # The season ends 2026-08-20, after which window_guard.py stops this
+  # workflow permanently and the published site is static forever. From
+  # 2026-08-06 that is ~6 more builds, ~4 GB total for the rest of the
+  # project's life. Sizing the cadence to the remaining lifespan is the
+  # proportionate fix; a per-day row cache to make builds incremental would
+  # be the right answer for a project that had to keep running, and is not
+  # worth putting under claim-critical code for two weeks.
   #
-  # Re-enable once builds stop re-reading the whole season every time (see
-  # docs/ARCHITECTURE.md, "Why rendering is decoupled from capture") or once
-  # the org has an allowance that can absorb it.
-  #
-  # - cron: "10 */3 * * *"
+  # Raise this freely if the org ever gets an allowance that can absorb it.
+  # Nothing here limits data: scan.py writes and barely reads, so collection
+  # continues at full depth on its own */15 schedule regardless. A sparse
+  # build cadence costs page freshness only -- and the claim pages are the
+  # least freshness-sensitive thing here (COMPENSATION_RULES.md's own
+  # 1-2 day registration lag, against a 2-month filing deadline).
+  schedule:
+    - cron: "0 4 */3 * *"
   workflow_dispatch: {}
 
 permissions:

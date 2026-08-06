@@ -76,18 +76,27 @@ class EgressMeter:
             return None
         return max(0, self.end - self.start)
 
-    def summary(self, runs_per_day=None):
+    def summary(self, builds_remaining=None, allowance_gb=None):
+        """Bytes measured, plus what the REST OF THE PROJECT will cost at the
+        current cadence.
+
+        Deliberately not a per-30-days projection. This project has a fixed
+        end date (config.WINDOW_END), after which window_guard.py stops every
+        workflow and the published site is static forever -- so a monthly
+        run-rate overstates the real bill and would argue for cutting the
+        cadence harder than the facts justify. What matters is the finite
+        number of builds actually left."""
         n = self.bytes_received
         if n is None:
             return "Egress meter unavailable on this platform (no %s)." % _PROC_NET_DEV
         mb = n / 1024.0 / 1024.0
         out = "EGRESS: %.1f MB received during %s." % (mb, self.label)
-        if runs_per_day:
-            # The number that actually matters: what this costs against the
-            # organisation's monthly allowance at the current build cadence.
-            out += " At %d builds/day that projects to %.2f GB/day, %.1f GB/30d." % (
-                runs_per_day,
-                mb * runs_per_day / 1024.0,
-                mb * runs_per_day * 30 / 1024.0,
-            )
+        if builds_remaining is not None:
+            total_gb = mb * max(builds_remaining, 0) / 1024.0
+            out += " %d build(s) left before the season closes = %.2f GB for the rest of this project's life" % (
+                builds_remaining, total_gb)
+            if allowance_gb:
+                out += " (%.0f%% of the %.1f GB monthly allowance)" % (
+                    100.0 * total_gb / allowance_gb, allowance_gb)
+            out += "."
         return out

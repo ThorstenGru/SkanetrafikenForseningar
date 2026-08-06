@@ -45,10 +45,24 @@ from build_dashboard import fetch_detail_rows, fetch_recent_line_anomalies, fetc
 from trafikverket_merge import merge_trafikverket
 
 
-# Must match build.yml's cron. Only used to turn one build's measured
-# egress into a monthly projection in the log -- if the cadence changes,
-# change this too or the projection quietly lies.
-BUILDS_PER_DAY = 8
+# Must match build.yml's cron ("0 4 */3 * *") and the organisation's
+# Supabase plan. Only used to turn one build's measured egress into a
+# remaining-lifetime projection in the log; if either changes, change these
+# too or the projection quietly lies.
+BUILD_INTERVAL_DAYS = 3
+EGRESS_ALLOWANCE_GB = 5.5
+
+
+def _builds_remaining():
+    """How many more scheduled builds before window_guard.py shuts this
+    workflow off for good -- the season's own end plus its wind-down. The
+    honest denominator for "what will this cost", given the project stops
+    rather than running forever."""
+    last_day = config.WINDOW_END + timedelta(days=config.WINDOW_GRACE_DAYS)
+    days_left = (last_day - config.today_local()).days
+    if days_left < 0:
+        return 0
+    return days_left // BUILD_INTERVAL_DAYS + 1
 
 
 def _slice(rows, start_date, end_date):
@@ -142,7 +156,7 @@ def main():
         conn.close()
         meter.finish()
 
-    print(meter.summary(runs_per_day=BUILDS_PER_DAY))
+    print(meter.summary(builds_remaining=_builds_remaining(), allowance_gb=EGRESS_ALLOWANCE_GB))
 
 
 if __name__ == "__main__":
