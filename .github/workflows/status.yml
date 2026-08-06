@@ -96,8 +96,15 @@ jobs:
     if: needs.build.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     # Shared with build.yml's own deploy job -- see its note. Pages takes one
-    # deployment at a time, and this workflow runs every 30 minutes, so it is
-    # the one most likely to be holding the slot when a build wants it.
+    # deployment at a time, and this workflow runs far more often than the
+    # real build, so it is the one most likely to be holding the slot when a
+    # build wants it.
+    #
+    # Deliberately keeps actions/deploy-pages' own 10-minute default timeout,
+    # where build.yml raises it to 40. The asymmetry is the point: this
+    # workflow's output is cheap -- a health readout that rebuilds in two
+    # hours anyway -- so it should give up and release the shared slot rather
+    # than sit on it while an expensive build queues behind it.
     concurrency:
       group: skanetrafiken-pages-deploy
       cancel-in-progress: false

@@ -143,7 +143,28 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    # Generous, because the thing being protected is expensive. See the
+    # deploy step's own note.
+    timeout-minutes: 45
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          # 40 minutes, up from the action's own 10-minute default.
+          #
+          # GitHub Pages soft-throttles at roughly 10 deployments/hour, and
+          # while throttled a deployment simply sits in `deployment_queued`.
+          # The default behaviour is to abort after 10 minutes ("Timeout
+          # reached, aborting!"), which on 2026-08-06 discarded three
+          # consecutive builds and left the live site four hours stale.
+          #
+          # Waiting is strictly better than aborting here: the build that
+          # produced this artifact cost ~671 MB of Supabase egress, roughly
+          # an eighth of the organisation's monthly allowance, and it only
+          # runs every third day. Throwing that away to save half an hour of
+          # runner time (free on a public repo) is the wrong trade in every
+          # direction. The shared concurrency group above means a long wait
+          # blocks only status.yml, which is cheap to lose and re-runs on its
+          # own in two hours.
+          timeout: 2400000
