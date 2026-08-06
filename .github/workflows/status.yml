@@ -9,14 +9,29 @@ on:
   # actually happen, though it doesn't eliminate it outright (a delayed run
   # can still collide).
   #
-  # Halved from every 15 min to every 30 on 2026-08-06. This page is
-  # monitoring metadata (database size, table row counts, last scan run) --
-  # it holds no delay data of its own, so its cadence has no bearing on data
-  # quality, and 96 connections a day to a free-tier database for a health
-  # readout that changes slowly was hard to justify while the org was over
-  # its egress allowance.
+  # Every 2 hours, down from every 15 minutes earlier on 2026-08-06.
+  #
+  # This page is monitoring metadata (database size, table row counts, last
+  # scan run) -- it holds no delay data of its own, so its cadence has no
+  # bearing on data quality. Two separate reasons to keep it low:
+  #
+  # 1. Every run redeploys the WHOLE site to Pages, not just status.html
+  #    (it curls the other pages and republishes them alongside). GitHub
+  #    Pages soft-throttles at roughly 10 builds/hour, and once throttled
+  #    every deployment sits in `deployment_queued` until
+  #    actions/deploy-pages@v4 times out -- which is exactly what happened
+  #    on 2026-08-06 after a burst of testing deploys, freezing the live
+  #    site at 10:18 UTC content for hours. At 48 runs/day this workflow was
+  #    the single largest consumer of that budget, purely to refresh a
+  #    health readout.
+  # 2. It is the workflow most likely to be holding the Pages deployment
+  #    slot when the real page build wants it -- and the real build now only
+  #    runs every third day, so a collision costs three days of staleness.
+  #
+  # 12 runs/day still detects a stalled scanner or a sick database well
+  # inside the window that matters.
   schedule:
-    - cron: "25,55 * * * *"
+    - cron: "25 */2 * * *"
   workflow_dispatch: {}
 
 permissions:
