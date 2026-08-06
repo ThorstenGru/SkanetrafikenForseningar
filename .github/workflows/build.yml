@@ -128,6 +128,18 @@ jobs:
     # to publish an artifact that was never uploaded.
     if: needs.build.outputs.should_run == 'true'
     runs-on: ubuntu-latest
+    # Shared with status.yml's own deploy job, deliberately. GitHub Pages
+    # accepts one deployment at a time; two workflows that each deploy but
+    # sit in different concurrency groups don't queue politely, they both
+    # start and the loser sits in `deployment_queued` until
+    # actions/deploy-pages@v4 gives up ("Timeout reached, aborting!").
+    # Observed twice on 2026-08-06 with build.yml and status.yml overlapping.
+    # A shared group makes them serialise instead. cancel-in-progress stays
+    # false: a queued deploy of freshly built pages should wait its turn, not
+    # be thrown away.
+    concurrency:
+      group: skanetrafiken-pages-deploy
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

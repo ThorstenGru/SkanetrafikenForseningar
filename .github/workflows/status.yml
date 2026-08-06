@@ -80,6 +80,12 @@ jobs:
     # to publish an artifact that was never uploaded.
     if: needs.build.outputs.should_run == 'true'
     runs-on: ubuntu-latest
+    # Shared with build.yml's own deploy job -- see its note. Pages takes one
+    # deployment at a time, and this workflow runs every 30 minutes, so it is
+    # the one most likely to be holding the slot when a build wants it.
+    concurrency:
+      group: skanetrafiken-pages-deploy
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
