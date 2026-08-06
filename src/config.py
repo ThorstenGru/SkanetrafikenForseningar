@@ -1,6 +1,7 @@
 """Configuration and constants for the Skånetrafiken delay scanner."""
 
 import os
+import re
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -302,6 +303,48 @@ def sommarbiljett_purchased_at():
     ineligible trips. See docs/COMPENSATION_RULES.md §13."""
     from datetime import datetime
     return datetime.fromisoformat(get_key("SOMMARBILJETT_PURCHASED_AT"))
+
+# Same patterns already validated against live data (2026-07-08, found 198
+# matching trips over 45 days) when investigating a real claim rejection --
+# see docs/TRAFIKVERKET_INTEGRATION.md and the "resalternativ" discussion in
+# COMPENSATION_RULES.md. Requested by the user as a hard rule, 2026-07-08:
+# any journey whose reason text mentions a replacement bus is never
+# claimable here, regardless of its delay length -- a replacement bus IS a
+# resalternativ (alternative route to the final destination), which is
+# exactly the undocumented mechanism Skånetrafiken cited when rejecting a
+# real claim on this project. Rather than guess whether a specific bus
+# substitution would or wouldn't survive that argument, this project simply
+# never recommends one.
+#
+# Lives in config.py rather than build_compensation.py (moved 2026-08-06) so
+# build_dashboard.py can apply it at alert-matching time without importing
+# build_compensation, which imports it -- see mentions_replacement_bus()'s
+# callers and _REPLACEMENT_BUS_PATTERNS' own history.
+_REPLACEMENT_BUS_PATTERNS = [
+    re.compile(r"ersättningsbuss", re.IGNORECASE),
+    re.compile(r"buss.*ersätter", re.IGNORECASE | re.DOTALL),
+    re.compile(r"ersätter.*tåg", re.IGNORECASE | re.DOTALL),
+    re.compile(r"buss istället", re.IGNORECASE),
+]
+
+
+def mentions_replacement_bus(reason):
+    if not reason:
+        return False
+    # Split on "; " -- the separator trafikverket_merge.py's own
+    # "; ".join(deviations) uses when a trip has multiple distinct
+    # Trafikverket deviation messages -- before matching, not after.
+    # Found by code review 2026-07-08: the DOTALL patterns above are
+    # deliberately loose WITHIN one deviation's own text (a single message
+    # can be multiple sentences), but matched across the whole reason
+    # string they could pair "buss" from one unrelated deviation with
+    # "ersätter" from a completely different one, e.g. "Bussbyte vid Lund
+    # pågår; senare tåget ersätter det inställda" -- two real deviations,
+    # neither of which is actually a replacement-bus notice for the final
+    # leg, that would still match "buss.*ersätter" as one concatenated
+    # string. Checking each segment on its own closes that gap.
+    return any(p.search(seg) for seg in reason.split("; ") for p in _REPLACEMENT_BUS_PATTERNS)
+
 
 def claim_window():
     """The window every claim-facing page (compensation, claims, mileage)

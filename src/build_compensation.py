@@ -29,7 +29,6 @@ Usage:
 import argparse
 import json
 import os
-import re
 from datetime import datetime
 
 import config
@@ -39,41 +38,13 @@ from trafikverket_merge import merge_trafikverket
 
 TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "compensation_template.html")
 
-# Same patterns already validated against live data (2026-07-08, found 198
-# matching trips over 45 days) when investigating a real claim rejection --
-# see docs/TRAFIKVERKET_INTEGRATION.md and the "resalternativ" discussion in
-# COMPENSATION_RULES.md. Requested by the user as a hard rule, 2026-07-08:
-# any journey whose reason text mentions a replacement bus is never
-# claimable here, regardless of its delay length -- a replacement bus IS a
-# resalternativ (alternative route to the final destination), which is
-# exactly the undocumented mechanism Skånetrafiken cited when rejecting a
-# real claim on this project. Rather than guess whether a specific bus
-# substitution would or wouldn't survive that argument, this project simply
-# never recommends one.
-_REPLACEMENT_BUS_PATTERNS = [
-    re.compile(r"ersättningsbuss", re.IGNORECASE),
-    re.compile(r"buss.*ersätter", re.IGNORECASE | re.DOTALL),
-    re.compile(r"ersätter.*tåg", re.IGNORECASE | re.DOTALL),
-    re.compile(r"buss istället", re.IGNORECASE),
-]
-
-
-def _mentions_replacement_bus(reason):
-    if not reason:
-        return False
-    # Split on "; " -- the separator trafikverket_merge.py's own
-    # "; ".join(deviations) uses when a trip has multiple distinct
-    # Trafikverket deviation messages -- before matching, not after.
-    # Found by code review 2026-07-08: the DOTALL patterns above are
-    # deliberately loose WITHIN one deviation's own text (a single message
-    # can be multiple sentences), but matched across the whole reason
-    # string they could pair "buss" from one unrelated deviation with
-    # "ersätter" from a completely different one, e.g. "Bussbyte vid Lund
-    # pågår; senare tåget ersätter det inställda" -- two real deviations,
-    # neither of which is actually a replacement-bus notice for the final
-    # leg, that would still match "buss.*ersätter" as one concatenated
-    # string. Checking each segment on its own closes that gap.
-    return any(p.search(seg) for seg in reason.split("; ") for p in _REPLACEMENT_BUS_PATTERNS)
+# The replacement-bus rule and its patterns moved to config.py on
+# 2026-08-06 so build_dashboard.py can apply it while it still has every
+# matching alert in hand, not just the one that won the display race -- see
+# _replacement_bus_in_alerts() there, and this module's own use below.
+# Re-exported under the old private name; nothing else about the rule
+# changed.
+_mentions_replacement_bus = config.mentions_replacement_bus
 
 
 def _trip_earliest_time(r):
@@ -145,7 +116,14 @@ def compute_compensation(rows):
             out.append(dict(r, calc="cancelled", delayUsedMin=None, delayApprox=False))
             continue
 
-        if _mentions_replacement_bus(r.get("reason")):
+        # Two sources, deliberately. `replacementBus` covers every GTFS-RT
+        # alert active for the trip (set in build_dashboard.fetch_detail_rows,
+        # see replacement_bus_in_alerts() there on why one reason string was
+        # not enough for a hard rule); the reason check still covers text
+        # that only exists post-merge -- Trafikverket deviation messages
+        # filled in by enrich_reasons(), and gap-fill rows, neither of which
+        # carry the flag.
+        if r.get("replacementBus") or _mentions_replacement_bus(r.get("reason")):
             # Not "eligible" and not "cancelled" -- a distinct category so
             # the UI can say exactly why this one isn't claimable, rather
             # than silently dropping it (this project's own "no silent
