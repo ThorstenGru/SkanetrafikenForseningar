@@ -39,9 +39,16 @@ import build_mileage_claims
 import config
 import data_quality_check
 import db
+from egress_meter import EgressMeter
 from build_compensation import compute_compensation
 from build_dashboard import fetch_detail_rows, fetch_recent_line_anomalies, fetch_trend
 from trafikverket_merge import merge_trafikverket
+
+
+# Must match build.yml's cron. Only used to turn one build's measured
+# egress into a monthly projection in the log -- if the cadence changes,
+# change this too or the projection quietly lies.
+BUILDS_PER_DAY = 8
 
 
 def _slice(rows, start_date, end_date):
@@ -74,6 +81,10 @@ def main():
     win_start, win_end = config.window_bounds()
     claim_start, claim_end = config.claim_window()
 
+    # Metered so every build states, in its own log, what it actually cost
+    # against the organisation's shared egress allowance -- see
+    # egress_meter.py on why query counts were never a substitute for this.
+    meter = EgressMeter("the full page build").begin()
     conn = db.connect()
     cur = conn.cursor()
     try:
@@ -129,6 +140,9 @@ def main():
     finally:
         cur.close()
         conn.close()
+        meter.finish()
+
+    print(meter.summary(runs_per_day=BUILDS_PER_DAY))
 
 
 if __name__ == "__main__":
