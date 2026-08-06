@@ -225,40 +225,26 @@ def best_reason(lookups, trip_id, route_id, stop_id, day_start, day_end):
     return None, None
 
 
-def replacement_bus_in_alerts(lookups, trip_id, route_id, stop_ids, day_start, day_end):
-    """Did ANY alert active for this trip mention a replacement bus -- not
-    just whichever one best_reason() happened to return?
-
-    Added 2026-08-06. `reason` is a single string, so the replacement-bus
-    rule in build_compensation.py (a HARD rule: such a journey is never
-    claimable, whatever its delay, because a replacement bus is a
-    resalternativ -- see config.mentions_replacement_bus) was only ever
-    tested against one of a trip's alerts. A route or stop routinely has
-    several concurrently-active alerts, and best_reason() returns the first
-    active candidate it finds, so which one that is decided whether the rule
-    fired at all.
-
-    That made a safety rule depend on row order. Observed directly when the
-    alert lookup was rewritten for the egress work: pinning the previously
-    arbitrary order changed the winning alert for 9 trips, and with it their
-    claimability category. It happened to fail safe that time (they dropped
-    out as sub-20-minute trips rather than becoming claimable); the opposite
-    is equally possible, and that is a trip this project would have
-    recommended filing on when its own hard rule says never.
-
-    Checking every active candidate removes the ordering sensitivity from
-    the decision entirely. Display still shows one reason -- that part is
-    genuinely a presentation choice -- but the rule no longer rides on it."""
-    by_trip, by_route, by_stop = lookups
-    candidates = [(by_trip, trip_id), (by_route, route_id)]
-    candidates += [(by_stop, sid) for sid in dict.fromkeys(stop_ids)]
-    for d, key in candidates:
-        for desc, start, end in d.get(key, ()):
-            if _alert_active_on(start, end, day_start, day_end) and config.mentions_replacement_bus(desc):
-                return True
-    return False
-
-
+# KNOWN GAP, measured 2026-08-06, deliberately left as-is -- see
+# docs/COMPENSATION_RULES.md "Replacement-bus rule: known ordering
+# sensitivity".
+#
+# best_reason() returns ONE alert, and build_compensation.py's hard
+# replacement-bus rule is tested against that one string. A route or stop
+# routinely has several concurrently-active alerts, so which one wins can
+# decide whether the rule fires. Pinning the lookup's previously arbitrary
+# row order (see build_alert_lookups) changed the winning alert for 9 of
+# ~2,000 trips, all sub-20-minute and none claimable either way.
+#
+# The obvious fix -- test EVERY alert active for the trip -- was implemented
+# and measured against real data, and is much worse: it reclassified 1,303
+# bus-replaced trips as 4,066 and cut eligible trips from 511 to 231,
+# because a single long-lived route-level "buss ersätter" alert then tars
+# every trip on that route, including ones that ran as trains and were
+# merely late. That is exactly the masking failure _DELAY_IRRELEVANT_ALERT_RE
+# above exists to fight. best_reason()'s trip > stop > route precedence is
+# load-bearing: it prefers the most specific evidence, and the rule must
+# stay attached to that same winner.
 def classify_trip(final_relationship, final_delay_sec, is_cancelled):
     """Status is based on the FINAL STOP specifically (what Skånetrafiken's
     compensation rule actually measures — delay "to your final destination"),
@@ -479,10 +465,6 @@ def fetch_detail_rows(cur, start_date, end_date, single_date):
             "maxDelayMin": round(t["max_delay_sec"] / 60, 1) if t["max_delay_sec"] is not None else None,
             "finalStopUnconfirmed": t["final_stop_unconfirmed"],
             "reason": reason,
-            # Tested across ALL of this trip's active alerts, not just the
-            # one shown in `reason` -- see replacement_bus_in_alerts().
-            "replacementBus": replacement_bus_in_alerts(
-                lookups, t["trip"], t["route_id"], t["stop_ids"], day_start, day_end),
             "reasonKnownBeforeDeparture": reason_known_before_departure,
             "stops": sorted_stops,
             "firstSeen": t["firstSeen"].isoformat(), "lastSeen": t["lastSeen"].isoformat(), "polls": t["polls"],

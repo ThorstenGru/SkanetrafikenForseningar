@@ -766,6 +766,44 @@ rule's purpose (avoid recommending a claim that's likely to fail on
 grounds this project can't verify), a false exclusion is the safer failure
 mode than a false inclusion.
 
+### Replacement-bus rule: known ordering sensitivity (measured 2026-08-06)
+
+The rule is tested against `reason`, which is **one** alert —
+`best_reason()` returns the first active candidate it finds, searching
+trip → stop → route. A route or stop routinely has several concurrently
+active alerts, so when a trip has more than one, which alert wins can decide
+whether the rule fires at all.
+
+This surfaced while rewriting `build_alert_lookups()` for the Supabase
+egress work. That query previously had no `ORDER BY`, so the winner depended
+on Postgres row order; pinning it changed the winning alert for **9 trips
+out of ~2,000**. All 9 were sub-20-minute and not claimable under either
+outcome — they moved from "listed as 🚌 not claimable" to "not listed" —
+but the same mechanism could in principle move a trip the other way, and
+that direction would mean recommending a claim this rule exists to block.
+
+**The obvious fix is worse, and was measured rather than assumed.** Testing
+every alert active for a trip, instead of only `best_reason()`'s winner,
+was implemented and run against real data: bus-replaced went from 1,303 to
+**4,066** trips and eligible trips fell from 511 to **231**. The cause is
+that one long-lived route-level "buss ersätter" alert then applies to every
+trip on that route for its whole active period — including trains that ran
+normally and were merely late. That is the same masking failure
+`_DELAY_IRRELEVANT_ALERT_RE` in `build_dashboard.py` was written to fight
+(the seasonal `platsbrist` notice, §—see that function's own note).
+`best_reason()`'s trip > stop > route precedence is load-bearing: it prefers
+the most specific available evidence, and the rule needs to stay attached to
+that same winner.
+
+**Current state:** precedence unchanged; the within-level tie-break is now
+deterministic (`ORDER BY alert_uid`) rather than dependent on physical row
+order, so the same data always produces the same verdict. The residual gap —
+a specific trip-level alert mentioning a bus can still lose to another
+trip-level alert — is documented rather than papered over. A principled fix
+would restrict the all-alerts check to the *same specificity level*
+`best_reason()` selected; that is untried and would need measuring against
+live data before adoption.
+
 ## 21. Interactive route map (added 2026-07-08)
 
 Each expanded stops-panel

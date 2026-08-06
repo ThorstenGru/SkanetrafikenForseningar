@@ -116,14 +116,7 @@ def compute_compensation(rows):
             out.append(dict(r, calc="cancelled", delayUsedMin=None, delayApprox=False))
             continue
 
-        # Two sources, deliberately. `replacementBus` covers every GTFS-RT
-        # alert active for the trip (set in build_dashboard.fetch_detail_rows,
-        # see replacement_bus_in_alerts() there on why one reason string was
-        # not enough for a hard rule); the reason check still covers text
-        # that only exists post-merge -- Trafikverket deviation messages
-        # filled in by enrich_reasons(), and gap-fill rows, neither of which
-        # carry the flag.
-        if r.get("replacementBus") or _mentions_replacement_bus(r.get("reason")):
+        if _mentions_replacement_bus(r.get("reason")):
             # Not "eligible" and not "cancelled" -- a distinct category so
             # the UI can say exactly why this one isn't claimable, rather
             # than silently dropping it (this project's own "no silent
