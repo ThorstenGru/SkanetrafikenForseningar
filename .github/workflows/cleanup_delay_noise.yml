@@ -17,7 +17,13 @@ concurrency:
 jobs:
   cleanup:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Raised from 15: the 2026-08-18 run got cancelled by THIS timeout
+    # while still waiting on the DELETE itself (no "Deleted N" line ever
+    # printed) -- the database is healthy and unblocked (db_activity_check.py
+    # confirmed no blocking locks), it is just running unusually slowly
+    # right now. Give it real room rather than repeatedly killing a query
+    # that may simply need more than 15 minutes to finish.
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
 

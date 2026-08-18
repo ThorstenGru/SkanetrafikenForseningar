@@ -37,6 +37,7 @@ def main():
         # the per-statement limit rather than have it silently kill the
         # cleanup partway through (2026-08-18).
         cur.execute("SET statement_timeout = 0")
+        print("Connected, running DELETE (this can take a while right now)...")
         cur.execute(
             """DELETE FROM delays
                WHERE GREATEST(COALESCE(ABS(arrival_delay_sec), 0), COALESCE(ABS(departure_delay_sec), 0)) < %s
