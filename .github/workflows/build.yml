@@ -68,7 +68,12 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Raised from 20 alongside build_all.py's new statement_timeout='10min'
+    # (2026-08-18): two builds in a row got QueryCanceled well under 20
+    # minutes on ordinary queries against the season's final, largest data
+    # volume. Gives a legitimately slow render room to finish instead of
+    # the job timeout racing the query's own new ceiling.
+    timeout-minutes: 40
     outputs:
       should_run: ${{ steps.guard.outputs.should_run }}
     steps:

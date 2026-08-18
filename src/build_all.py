@@ -102,6 +102,16 @@ def main():
     conn = db.connect()
     cur = conn.cursor()
     try:
+        # Confirmed 2026-08-18: two builds in a row got QueryCanceled
+        # (statement timeout) on ordinary read queries against `delays` /
+        # `alerts`, on a database independently confirmed to have no
+        # blocking locks -- the ambient timeout on this connection is just
+        # tight relative to the season's final, largest data volume. Raised
+        # rather than removed: this is still the scheduled production
+        # connection, so a genuinely runaway query should eventually give
+        # up rather than hold the connection open until the job's own
+        # timeout-minutes kills it.
+        cur.execute("SET statement_timeout = '10min'")
         trend = fetch_trend(cur)
         line_anomalies = fetch_recent_line_anomalies(cur)
 
