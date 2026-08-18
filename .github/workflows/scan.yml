@@ -16,8 +16,11 @@ name: Scan Skånetrafiken delays
 # description of what actually happens; see docs/RUNBOOK.md.
 
 on:
-  schedule:
-    - cron: "*/15 * * * *"
+  # Scheduled polling stopped 2026-08-18 at the user's own request: one
+  # final full pull was run manually, then this cron was removed rather
+  # than left in place unused -- resuming live capture just means restoring
+  # the `schedule:` block below (`cron: "*/15 * * * *"`), not a rebuild of
+  # anything. workflow_dispatch stays available for a manual one-off pull.
   workflow_dispatch:
     inputs:
       force_static_refresh:
