@@ -21,6 +21,12 @@ def main():
     conn = db.connect()
     cur = conn.cursor()
     try:
+        # Confirmed 2026-08-18: this connection's ambient statement_timeout
+        # is short enough that even the blocking-relationship self-join
+        # below got QueryCanceled on a database with only a handful of
+        # idle sessions and no real contention. One-off diagnostic already
+        # bounded by the workflow's own job timeout.
+        cur.execute("SET statement_timeout = 0")
         if args.kill:
             cur.execute("SELECT pg_terminate_backend(%s)", (args.kill,))
             print("Terminate result for PID %s: %s" % (args.kill, cur.fetchone()[0]))

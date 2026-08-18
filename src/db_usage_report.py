@@ -13,6 +13,13 @@ def main():
     conn = db.connect()
     cur = conn.cursor()
     try:
+        # This connection's ambient statement_timeout is short enough that
+        # even the full-table-scan breakdown query below was getting
+        # QueryCanceled -- confirmed 2026-08-18 via db_activity_check.py
+        # (no blocking locks, just a large table and a tight timeout).
+        # Read-only diagnostic already bounded by the workflow's own job
+        # timeout, so lifting the per-statement limit is safe here.
+        cur.execute("SET statement_timeout = 0")
         cur.execute("SELECT pg_size_pretty(pg_database_size(current_database()))")
         print("Total database size: %s" % cur.fetchone()[0])
 

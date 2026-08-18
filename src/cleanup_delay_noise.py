@@ -27,6 +27,16 @@ def main():
     conn = db.connect()
     cur = conn.cursor()
     try:
+        # db_activity_check.py just proved this database has no blocking
+        # locks and only a handful of idle sessions, yet a plain
+        # pg_stat_activity/pg_locks self-join and a full-table aggregate
+        # both got QueryCanceled -- Supabase's ambient statement_timeout on
+        # this connection is short enough to kill a real DELETE/VACUUM over
+        # a table this size. This is a one-off maintenance script already
+        # bounded by the workflow's own job timeout, so it's safe to lift
+        # the per-statement limit rather than have it silently kill the
+        # cleanup partway through (2026-08-18).
+        cur.execute("SET statement_timeout = 0")
         cur.execute(
             """DELETE FROM delays
                WHERE GREATEST(COALESCE(ABS(arrival_delay_sec), 0), COALESCE(ABS(departure_delay_sec), 0)) < %s
@@ -49,9 +59,12 @@ def main():
     conn.autocommit = True  # required: VACUUM cannot run inside a transaction block
     cur = conn.cursor()
     try:
+        cur.execute("SET statement_timeout = 0")
         print("Running VACUUM FULL on delays (reclaims the file space, can take a moment)...")
         cur.execute("VACUUM FULL delays")
         print("VACUUM FULL complete.")
+        print("Running ANALYZE on delays (refresh planner stats after the bulk delete)...")
+        cur.execute("ANALYZE delays")
     finally:
         cur.close()
         conn.close()
