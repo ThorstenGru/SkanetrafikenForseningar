@@ -28,7 +28,12 @@ jobs:
         run: |
           # pg_dump needs a session-mode connection: pooler port 6543 is transaction mode
           URL="${DATABASE_URL/:6543\//:5432/}"
-          /usr/lib/postgresql/17/bin/pg_dump "$URL" --schema=public --no-owner --no-privileges -Fc -f skane.dump
+          # The pooler intermittently refuses connections (EAUTHQUERY); retry.
+          for attempt in 1 2 3 4 5 6; do
+            /usr/lib/postgresql/17/bin/pg_dump "$URL" --schema=public --no-owner --no-privileges -Fc -f skane.dump && break
+            echo "pg_dump attempt $attempt failed, retrying in 45s"; rm -f skane.dump; sleep 45
+            [ "$attempt" = 6 ] && exit 1
+          done
           ls -l skane.dump
           gpg --batch --yes --pinentry-mode loopback --passphrase "$ARCHIVE_PASSPHRASE" --symmetric --cipher-algo AES256 -o skane.dump.gpg skane.dump
           rm skane.dump
