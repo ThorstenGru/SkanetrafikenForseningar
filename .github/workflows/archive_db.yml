@@ -26,7 +26,9 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           ARCHIVE_PASSPHRASE: ${{ secrets.ARCHIVE_PASSPHRASE }}
         run: |
-          /usr/lib/postgresql/17/bin/pg_dump "$DATABASE_URL" --schema=public --no-owner --no-privileges -Fc -f skane.dump
+          # pg_dump needs a session-mode connection: pooler port 6543 is transaction mode
+          URL="${DATABASE_URL/:6543\//:5432/}"
+          /usr/lib/postgresql/17/bin/pg_dump "$URL" --schema=public --no-owner --no-privileges -Fc -f skane.dump
           ls -l skane.dump
           gpg --batch --yes --pinentry-mode loopback --passphrase "$ARCHIVE_PASSPHRASE" --symmetric --cipher-algo AES256 -o skane.dump.gpg skane.dump
           rm skane.dump
